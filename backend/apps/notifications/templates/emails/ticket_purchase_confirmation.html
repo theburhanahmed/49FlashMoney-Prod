@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Ticket Purchase Confirmation</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #4CAF50;">Ticket Purchase Confirmed!</h1>
+        <p>Hi {{ user.username }},</p>
+        <p>Your ticket purchase has been confirmed.</p>
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <p><strong>Lottery:</strong> {{ lottery.name }}</p>
+            <p><strong>Ticket Number:</strong> #{{ ticket.ticket_number }}</p>
+            <p><strong>Ticket Price:</strong> ${{ ticket.lottery.ticket_price }}</p>
+            <p><strong>Purchase Date:</strong> {{ ticket.purchased_at|date:"F d, Y H:i" }}</p>
+        </div>
+        <p>Good luck! The draw will be conducted on {{ lottery.draw_date|date:"F d, Y H:i" }}.</p>
+        <p>Best regards,<br>The Lottery System Team</p>
+    </div>
+</body>
+</html>
+

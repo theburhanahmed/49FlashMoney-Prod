@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Congratulations! You Won!</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #FFD700;">🎉 Congratulations! You Won! 🎉</h1>
+        <p>Hi {{ user.username }},</p>
+        <p>We're thrilled to inform you that you've won the lottery!</p>
+        <div style="background-color: #fff9c4; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #FFD700;">
+            <p style="font-size: 24px; text-align: center; margin: 10px 0;"><strong>Prize Amount: ${{ prize_amount }}</strong></p>
+            <p><strong>Lottery:</strong> {{ lottery.name }}</p>
+            <p><strong>Ticket Number:</strong> #{{ winner.ticket.ticket_number }}</p>
+        </div>
+        <p>Your prize has been credited to your wallet. You can withdraw it anytime!</p>
+        <p style="text-align: center; margin: 30px 0;">
+            <a href="{{ frontend_url }}/dashboard" style="background-color: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">View Wallet</a>
+        </p>
+        <p>Congratulations again!</p>
+        <p>Best regards,<br>The Lottery System Team</p>
+    </div>
+</body>
+</html>
+

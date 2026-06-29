@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Withdrawal Status Update</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #2196F3;">Withdrawal Status Update</h1>
+        <p>Hi {{ user.username }},</p>
+        <p>Your withdrawal request status has been updated.</p>
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <p><strong>Amount:</strong> ${{ withdrawal.amount }}</p>
+            <p><strong>Status:</strong> {{ withdrawal.get_status_display }}</p>
+            <p><strong>Status Message:</strong> {{ status_message }}</p>
+        </div>
+        <p>You can check your withdrawal status in your dashboard.</p>
+        <p style="text-align: center; margin: 30px 0;">
+            <a href="{{ frontend_url }}/transactions" style="background-color: #2196F3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">View Transactions</a>
+        </p>
+        <p>Best regards,<br>The Lottery System Team</p>
+    </div>
+</body>
+</html>
+
