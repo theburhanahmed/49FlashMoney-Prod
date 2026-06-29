@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: TODO
+  version: 0.1.0
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
