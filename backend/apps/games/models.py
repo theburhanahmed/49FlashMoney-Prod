@@ -8,15 +8,19 @@ from apps.users.models import User
 
 
 class GameKind:
-    """Game type constants. Extend for Ludo, Carrom, etc."""
+    """Game type constants."""
     SNAKES_LADDERS = 'SNAKES_LADDERS'
     LUDO = 'LUDO'
     CARROM = 'CARROM'
+    AVIATOR = 'AVIATOR'
+    WINGO = 'WINGO'
 
     CHOICES = [
         (SNAKES_LADDERS, 'Snakes & Ladders'),
         (LUDO, 'Ludo'),
         (CARROM, 'Carrom'),
+        (AVIATOR, 'Aviator'),
+        (WINGO, 'Wingo'),
     ]
 
 

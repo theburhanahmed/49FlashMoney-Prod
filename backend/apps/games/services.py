@@ -22,6 +22,8 @@ GAME_ENTRY_LIMITS = {
     GameKind.SNAKES_LADDERS: (Decimal('0.10'), Decimal('100.00')),
     GameKind.LUDO: (Decimal('0.10'), Decimal('100.00')),
     GameKind.CARROM: (Decimal('0.10'), Decimal('100.00')),
+    GameKind.AVIATOR: (Decimal('1.00'), Decimal('1000.00')),
+    GameKind.WINGO: (Decimal('1.00'), Decimal('500.00')),
 }
 
 
