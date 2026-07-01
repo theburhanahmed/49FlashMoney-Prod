@@ -5,8 +5,8 @@ import apiClient from './client';
 import type { GameRoom, GameKind } from '../types';
 
 export const gamesApi = {
-  listRooms: (params?: { game_kind?: GameKind; status?: string }) =>
-    apiClient.get<GameRoom[]>('/games/rooms/', { params }),
+  listRooms: <T = GameRoom[]>(params?: { game_kind?: GameKind; status?: string }) =>
+    apiClient.get<T>('/games/rooms/', { params }),
 
   getRoom: (roomId: string) =>
     apiClient.get<GameRoom>(`/games/rooms/${roomId}/`),

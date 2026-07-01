@@ -137,7 +137,7 @@ export interface RazorpayConfig {
 
 // ─── Games ───────────────────────────────────────────────────────────────────
 
-export type GameKind = 'SNAKES_LADDERS' | 'LUDO' | 'CARROM' | 'AVIATOR' | 'WINGO';
+export type GameKind = 'SNAKES_LADDERS' | 'LUDO' | 'CARROM' | 'AVIATOR' | 'WINGO' | 'MINES' | 'SCRATCH_CARD';
 
 export type GameRoomStatus = 'WAITING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
