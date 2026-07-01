@@ -4,6 +4,8 @@ from django.utils import timezone
 from apps.payments.models import StripeCustomer, PaymentIntent
 from apps.transactions.models import Transaction
 from apps.users.models import User
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 import logging
 
 logger = logging.getLogger(__name__)
@@ -293,10 +295,24 @@ class StripeService:
 
             user = payment_intent.user
 
-            # Credit user wallet
-            user.add_balance(payment_intent.amount)
+            # Credit user wallet via WalletService (ledger-backed, idempotent)
+            idempotency_key = f'stripe_deposit_{payment_intent_id}'
+            WalletService.credit(
+                user=user,
+                amount=payment_intent.amount,
+                entry_type=LedgerEntry.DEPOSIT,
+                description=f'Deposit via Stripe - Payment Intent {payment_intent_id}',
+                reference_type='STRIPE_PAYMENT_INTENT',
+                reference_id=payment_intent_id,
+                idempotency_key=idempotency_key,
+                actor='stripe_service',
+            )
+            logger.info(
+                f"Stripe deposit credited via ledger: user={user.id} "
+                f"amount={payment_intent.amount} pi={payment_intent_id}"
+            )
 
-            # Create transaction
+            # Create transaction record for analytics/reporting
             transaction = Transaction.objects.create(
                 user=user,
                 type='DEPOSIT',

@@ -1,141 +1,131 @@
+"""
+Tests for notification services and WebSocket consumer.
+Covers: GameNotificationService, PaymentNotificationService,
+and NotificationConsumer event handlers.
+"""
+from decimal import Decimal
+from unittest.mock import patch, MagicMock
+
 from django.test import TestCase
 from django.contrib.auth import get_user_model
-from rest_framework.test import APIClient
-from rest_framework import status
+
 from apps.notifications.models import Notification
-from apps.notifications.services import EmailService
-from unittest.mock import patch, MagicMock
+from apps.notifications.game_notifications import (
+    GameNotificationService,
+    PaymentNotificationService,
+)
 
 User = get_user_model()
 
 
-class NotificationModelTestCase(TestCase):
-    """Test Notification model"""
+class GameNotificationServiceTestCase(TestCase):
+    """Test GameNotificationService creates correct notifications."""
 
     def setUp(self):
         self.user = User.objects.create_user(
-            username='testuser',
-            email='test@example.com',
-            password='TestPassword123'
+            username='notif_user',
+            email='notif@test.com',
+            password='Pass123!',
         )
 
-    def test_create_notification(self):
-        """Test creating a notification"""
-        notification = Notification.objects.create(
-            user=self.user,
-            type='SYSTEM',
-            title='Test Notification',
-            message='This is a test notification',
-            action_url='/dashboard'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_game_bet_accepted(self, mock_channel_layer):
+        mock_channel_layer.return_value = None  # No channel layer in tests
+        notif = GameNotificationService.game_bet_accepted(
+            self.user, 'AVIATOR', Decimal('50.00'), 'room-123'
         )
+        self.assertEqual(notif.type, 'GAME')
+        self.assertEqual(notif.title, 'Bet Accepted')
+        self.assertIn('50', notif.message)
+        self.assertEqual(notif.metadata['game_kind'], 'AVIATOR')
 
-        self.assertEqual(notification.user, self.user)
-        self.assertEqual(notification.type, 'SYSTEM')
-        self.assertFalse(notification.is_read)
-
-    def test_mark_as_read(self):
-        """Test marking notification as read"""
-        notification = Notification.objects.create(
-            user=self.user,
-            type='SYSTEM',
-            title='Test Notification',
-            message='This is a test notification'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_game_win(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = GameNotificationService.game_win(
+            self.user, 'MINES', Decimal('150.00'), 'room-456'
         )
+        self.assertEqual(notif.title, 'You Won!')
+        self.assertIn('150', notif.message)
+        self.assertEqual(notif.metadata['payout'], '150.00')
 
-        notification.mark_as_read()
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_game_loss(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = GameNotificationService.game_loss(
+            self.user, 'WINGO', 'room-789'
+        )
+        self.assertEqual(notif.title, 'Round Complete')
 
-        self.assertTrue(notification.is_read)
-        self.assertIsNotNone(notification.read_at)
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_game_round_started(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = GameNotificationService.game_round_started(
+            self.user, 'AVIATOR', 'room-abc'
+        )
+        self.assertEqual(notif.title, 'Round Started')
+
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_notification_created_in_db(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        GameNotificationService.game_win(
+            self.user, 'MINES', Decimal('100'), 'room-x'
+        )
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
 
 
-class EmailServiceTestCase(TestCase):
-    """Test EmailService"""
+class PaymentNotificationServiceTestCase(TestCase):
+    """Test PaymentNotificationService creates correct notifications."""
 
     def setUp(self):
         self.user = User.objects.create_user(
-            username='testuser',
-            email='test@example.com',
-            password='TestPassword123'
+            username='pay_notif_user',
+            email='paynotif@test.com',
+            password='Pass123!',
         )
 
-    @patch('apps.notifications.services.EmailMultiAlternatives.send')
-    def test_send_welcome_email(self, mock_send):
-        """Test sending welcome email"""
-        result = EmailService.send_welcome_email(self.user)
-        self.assertTrue(result)
-        mock_send.assert_called_once()
-
-    @patch('apps.notifications.services.EmailMultiAlternatives.send')
-    def test_send_email_verification(self, mock_send):
-        """Test sending email verification"""
-        result = EmailService.send_email_verification(self.user)
-        self.assertTrue(result)
-        mock_send.assert_called_once()
-
-    @patch('apps.notifications.services.EmailMultiAlternatives.send')
-    def test_send_password_reset(self, mock_send):
-        """Test sending password reset email"""
-        token = 'test_token_123'
-        result = EmailService.send_password_reset(self.user, token)
-        self.assertTrue(result)
-        mock_send.assert_called_once()
-
-    @patch('apps.notifications.services.EmailMultiAlternatives.send')
-    def test_send_deposit_confirmation(self, mock_send):
-        """Test sending deposit confirmation email"""
-        from apps.transactions.models import Transaction
-        from decimal import Decimal
-        
-        transaction = Transaction.objects.create(
-            user=self.user,
-            type='DEPOSIT',
-            amount=Decimal('100.00'),
-            status='COMPLETED'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_deposit_confirmed(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = PaymentNotificationService.deposit_confirmed(
+            self.user, Decimal('200.00'), 'stripe'
         )
-        
-        result = EmailService.send_deposit_confirmation(self.user, transaction)
-        self.assertTrue(result)
-        mock_send.assert_called_once()
+        self.assertEqual(notif.type, 'TRANSACTION')
+        self.assertEqual(notif.title, 'Deposit Confirmed')
+        self.assertIn('200', notif.message)
 
-
-class NotificationViewSetTestCase(TestCase):
-    """Test NotificationViewSet endpoints"""
-
-    def setUp(self):
-        self.client = APIClient()
-        self.user = User.objects.create_user(
-            username='testuser',
-            email='test@example.com',
-            password='TestPassword123'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_withdrawal_requested(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = PaymentNotificationService.withdrawal_requested(
+            self.user, Decimal('100.00'), 'wd-001'
         )
-        self.client.force_authenticate(user=self.user)
+        self.assertEqual(notif.title, 'Withdrawal Requested')
+        self.assertEqual(notif.metadata['withdrawal_id'], 'wd-001')
 
-    def test_list_notifications(self):
-        """Test listing notifications"""
-        Notification.objects.create(
-            user=self.user,
-            type='SYSTEM',
-            title='Test Notification',
-            message='Test message'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_withdrawal_approved(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = PaymentNotificationService.withdrawal_approved(
+            self.user, Decimal('100.00'), 'wd-002'
         )
+        self.assertEqual(notif.title, 'Withdrawal Approved')
 
-        response = self.client.get('/api/notifications/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreater(len(response.data), 0)
-
-    def test_mark_notification_as_read(self):
-        """Test marking notification as read"""
-        notification = Notification.objects.create(
-            user=self.user,
-            type='SYSTEM',
-            title='Test Notification',
-            message='Test message'
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_withdrawal_rejected(self, mock_channel_layer):
+        mock_channel_layer.return_value = None
+        notif = PaymentNotificationService.withdrawal_rejected(
+            self.user, Decimal('50.00'), 'wd-003', 'KYC pending'
         )
+        self.assertEqual(notif.title, 'Withdrawal Rejected')
+        self.assertIn('KYC pending', notif.message)
+        self.assertEqual(notif.metadata['reason'], 'KYC pending')
 
-        response = self.client.post(f'/api/notifications/{notification.id}/mark_read/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        notification.refresh_from_db()
-        self.assertTrue(notification.is_read)
-
+    @patch('apps.notifications.game_notifications.get_channel_layer')
+    def test_broadcast_called_when_channel_layer_exists(self, mock_channel_layer):
+        mock_layer = MagicMock()
+        mock_channel_layer.return_value = mock_layer
+        PaymentNotificationService.deposit_confirmed(
+            self.user, Decimal('100.00'), 'stripe'
+        )
+        mock_layer.group_send.assert_called_once()

@@ -209,3 +209,95 @@ export interface ApiError {
   detail?: string;
   [key: string]: unknown;
 }
+
+// ─── Game Engine Types ──────────────────────────────────────────────────────
+
+export interface MinesGameState {
+  phase: 'betting' | 'playing' | 'cashed_out' | 'exploded' | 'finished';
+  grid_size: number;
+  mine_count: number;
+  revealed: number[];
+  bet_amount: string;
+  current_multiplier: string;
+  payout: string | null;
+  user_id: string;
+  config: {
+    grid_size: number;
+    min_mines: number;
+    max_mines: number;
+    min_bet: string;
+    max_bet: string;
+    house_edge: string;
+  };
+}
+
+export interface GameEngine {
+  game_kind: string;
+  module: string;
+  has_default_config?: boolean;
+  has_public_state?: boolean;
+}
+
+// ─── Payment Request Types ──────────────────────────────────────────────────
+
+export interface DepositRequest {
+  amount: number;
+  payment_method_id?: string;
+  save_payment_method?: boolean;
+}
+
+export interface WithdrawalRequest {
+  amount: number;
+  bank_details?: Record<string, string>;
+}
+
+// ─── Audit Types ────────────────────────────────────────────────────────────
+
+export interface AuditLog {
+  id: number;
+  user: string;
+  action: string;
+  description: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  changes: Record<string, unknown>;
+  timestamp: string;
+}
+
+// Scratch Card types
+export interface ScratchCardState {
+  phase: 'betting' | 'scratching' | 'finished';
+  grid_size: number;
+  cells: Array<{ value: string | null; revealed: boolean }>;
+  revealed_indices: number[];
+  bet_amount: string;
+  total_prize: string;
+  user_id: string;
+}
+
+// Slots types
+export interface SlotsGameInfo {
+  id: string;
+  name: string;
+  min_bet: string;
+  max_bet: string;
+  rtp_percent: string;
+}
+
+// VIP types
+export interface VIPTierInfo {
+  id: string;
+  name: string;
+  level: number;
+  cashback_percentage: string;
+  benefits: Record<string, unknown>;
+}
+
+// Promotion types
+export interface PromotionInfo {
+  id: string;
+  name: string;
+  promotion_type: string;
+  bonus_percentage: string;
+  max_bonus_amount: string;
+}

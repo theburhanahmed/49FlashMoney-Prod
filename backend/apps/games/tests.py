@@ -515,3 +515,135 @@ class WingoEngineTestCase(TestCase):
         mult = _get_payout_multiplier('big_small', 'SMALL', 3, {})
         self.assertEqual(mult, Decimal('2.00'))
 
+
+# ---------------------------------------------------------------------------
+# Tests for leave_room service and start_game permission check
+# ---------------------------------------------------------------------------
+
+@override_settings(
+    CACHES={
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'games-leave-tests',
+        }
+    },
+    REST_FRAMEWORK={
+        'DEFAULT_THROTTLE_CLASSES': [],
+        'DEFAULT_THROTTLE_RATES': {},
+    },
+)
+class LeaveRoomServiceTestCase(TestCase):
+    """Tests for the leave_room service function."""
+
+    def setUp(self):
+        self.user1 = User.objects.create_user(
+            username="leave_p1",
+            email="leave_p1@test.com",
+            password="Pass123!",
+            wallet_balance=Decimal("100.00"),
+        )
+        self.user2 = User.objects.create_user(
+            username="leave_p2",
+            email="leave_p2@test.com",
+            password="Pass123!",
+            wallet_balance=Decimal("100.00"),
+        )
+        self.room = GameRoom.objects.create(
+            game_kind=GameKind.SNAKES_LADDERS,
+            status=GameRoom.STATUS_WAITING,
+            entry_fee=Decimal("1.00"),
+            min_players=2,
+            max_players=4,
+            created_by=self.user1,
+        )
+        GameRoomPlayer.objects.create(room=self.room, user=self.user1, position=0)
+        GameRoomPlayer.objects.create(room=self.room, user=self.user2, position=1)
+
+    def test_leave_room_removes_player(self):
+        from apps.games.services import leave_room
+        result = leave_room(self.user2, str(self.room.id))
+        self.assertIsNotNone(result)
+        self.assertFalse(result.players.filter(user=self.user2).exists())
+        self.assertTrue(result.players.filter(user=self.user1).exists())
+
+    def test_leave_room_deletes_empty_room(self):
+        from apps.games.services import leave_room
+        # Remove user2 first
+        leave_room(self.user2, str(self.room.id))
+        # Now user1 leaves -> room should be deleted
+        result = leave_room(self.user1, str(self.room.id))
+        self.assertIsNone(result)
+        self.assertFalse(GameRoom.objects.filter(id=self.room.id).exists())
+
+    def test_leave_room_not_in_room_raises(self):
+        from apps.games.services import leave_room
+        other_user = User.objects.create_user(
+            username="outsider",
+            email="outsider@test.com",
+            password="Pass123!",
+            wallet_balance=Decimal("100.00"),
+        )
+        with self.assertRaises(ValueError) as ctx:
+            leave_room(other_user, str(self.room.id))
+        self.assertIn('not in this room', str(ctx.exception))
+
+    def test_leave_room_in_progress_raises(self):
+        from apps.games.services import leave_room
+        self.room.status = GameRoom.STATUS_IN_PROGRESS
+        self.room.save()
+        with self.assertRaises(ValueError) as ctx:
+            leave_room(self.user1, str(self.room.id))
+        self.assertIn('Can only leave when room is waiting', str(ctx.exception))
+
+    def test_leave_room_nonexistent_raises(self):
+        from apps.games.services import leave_room
+        import uuid
+        with self.assertRaises(ValueError) as ctx:
+            leave_room(self.user1, str(uuid.uuid4()))
+        self.assertIn('Room not found', str(ctx.exception))
+
+
+@override_settings(
+    CACHES={
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'games-perm-tests',
+        }
+    },
+    REST_FRAMEWORK={
+        'DEFAULT_THROTTLE_CLASSES': [],
+        'DEFAULT_THROTTLE_RATES': {},
+    },
+)
+class StartGamePermissionTestCase(TestCase):
+    """Test that only room participants can start a game."""
+
+    def setUp(self):
+        self.user1 = User.objects.create_user(
+            username="starter_p1",
+            email="starter_p1@test.com",
+            password="Pass123!",
+            wallet_balance=Decimal("100.00"),
+        )
+        self.outsider = User.objects.create_user(
+            username="starter_outsider",
+            email="starter_outsider@test.com",
+            password="Pass123!",
+            wallet_balance=Decimal("100.00"),
+        )
+        self.room = GameRoom.objects.create(
+            game_kind=GameKind.SNAKES_LADDERS,
+            status=GameRoom.STATUS_WAITING,
+            entry_fee=Decimal("1.00"),
+            min_players=1,
+            max_players=4,
+            created_by=self.user1,
+        )
+        GameRoomPlayer.objects.create(room=self.room, user=self.user1, position=0)
+
+    def test_outsider_cannot_start_game(self):
+        from apps.games.services import start_game
+        with self.assertRaises(ValueError) as ctx:
+            start_game(str(self.room.id), started_by_user=self.outsider)
+        self.assertIn('must be in the room', str(ctx.exception))
+

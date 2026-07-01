@@ -143,61 +143,21 @@ class ReferralAdmin(admin.ModelAdmin):
     days_remaining.short_description = 'Days Remaining'
 
     def approve_referrals(self, request, queryset):
-        """Admin action to approve referrals."""
-        from django.utils import timezone
-        program = ReferralProgram.get_program()
-        
+        """Admin action to approve referrals (delegates to ReferralService)."""
+        from apps.referrals.services import ReferralService
+
         count = 0
         for referral in queryset.filter(status='PENDING'):
-            referral.status = 'BONUS_AWARDED'
-            referral.referrer_bonus = program.referral_bonus_amount
-            referral.referred_user_bonus = program.referred_user_bonus
-            referral.bonus_awarded_at = timezone.now()
-            referral.save()
-            
-            # Create bonuses
-            ReferralBonus.objects.create(
-                user=referral.referrer,
-                referral=referral,
-                bonus_type='REFERRER',
-                amount=program.referral_bonus_amount,
-                status='CREDITED',
-                credited_at=timezone.now()
-            )
-            
-            ReferralBonus.objects.create(
-                user=referral.referred_user,
-                referral=referral,
-                bonus_type='REFERRED',
-                amount=program.referred_user_bonus,
-                status='CREDITED',
-                credited_at=timezone.now()
-            )
-            
-            # Credit bonuses to users
-            referral.referrer.add_balance(program.referral_bonus_amount)
-            referral.referred_user.add_balance(program.referred_user_bonus)
-            
-            # Update referral link
-            referral.referrer.referral_link.total_referred += 1
-            referral.referrer.referral_link.total_bonus_earned += program.referral_bonus_amount
-            referral.referrer.referral_link.save()
-            
-            # Send notification emails
-            from apps.notifications.tasks import send_referral_bonus_credited_task
-            send_referral_bonus_credited_task.delay(
-                str(referral.referrer.id),
-                float(program.referral_bonus_amount),
-                str(referral.id)
-            )
-            send_referral_bonus_credited_task.delay(
-                str(referral.referred_user.id),
-                float(program.referred_user_bonus),
-                str(referral.id)
-            )
-            
-            count += 1
-        
+            try:
+                ReferralService.award_referral_bonuses(referral)
+                count += 1
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f'Error approving referral {referral.id}: {e}',
+                    level='error',
+                )
+
         self.message_user(request, f'{count} referrals approved and bonuses awarded.')
     
     approve_referrals.short_description = 'Approve selected referrals'

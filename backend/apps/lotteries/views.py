@@ -130,100 +130,51 @@ class LotteryViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def buy_ticket(self, request, pk=None):
-        """Purchase a lottery ticket"""
+        """Purchase a lottery ticket via TicketPurchaseService (ledger-backed)."""
         from apps.users.responsible_gaming import ResponsibleGamingService
-        
+        from apps.lotteries.services import TicketPurchaseService
+        from apps.common.exceptions import LotteryError
+
         lottery = self.get_object()
 
-        # Check self-exclusion
+        # Responsible gaming checks (view-level policy, not business logic)
         is_excluded, exclusion_reason = ResponsibleGamingService.check_self_exclusion(request.user)
         if is_excluded:
             return Response(
                 {'error': exclusion_reason},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Check session time
-        is_valid, error_msg, minutes_remaining = ResponsibleGamingService.check_session_time(request.user)
+
+        is_valid, error_msg, _mins = ResponsibleGamingService.check_session_time(request.user)
         if not is_valid:
-            return Response(
-                {'error': error_msg},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({'error': error_msg}, status=status.HTTP_403_FORBIDDEN)
 
-        # Validation
-        if not lottery.is_active():
-            return Response(
-                {'error': 'This lottery is not active'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if request.user.wallet_balance < lottery.ticket_price:
-            return Response(
-                {'error': 'Insufficient balance'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check loss limit
         is_valid, error_message = ResponsibleGamingService.check_loss_limit(request.user, lottery.ticket_price)
         if not is_valid:
-            return Response(
-                {'error': error_message},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+            return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+
         # Update session start if not set
         if not request.user.last_session_start:
             request.user.last_session_start = timezone.now()
-            request.user.save()
+            request.user.save(update_fields=['last_session_start'])
 
-        # Generate ticket number
-        last_ticket = Ticket.objects.filter(lottery=lottery).order_by('ticket_number').last()
-        ticket_number = (last_ticket.ticket_number + 1) if last_ticket else 1
+        # Delegate to service (atomic, ledger-backed, idempotent)
+        try:
+            tickets = TicketPurchaseService.purchase_ticket(request.user, lottery, quantity=1)
+        except LotteryError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create ticket
-        ticket = Ticket.objects.create(
-            user=request.user,
-            lottery=lottery,
-            ticket_number=ticket_number
-        )
+        ticket = tickets[0]
 
-        # Deduct from wallet
-        request.user.deduct_balance(lottery.ticket_price)
-
-        # Update lottery
-        lottery.available_tickets -= 1
-        lottery.save()
-
-        # Create transaction
-        Transaction.objects.create(
-            user=request.user,
-            type='TICKET_PURCHASE',
-            amount=lottery.ticket_price,
-            status='COMPLETED',
-            lottery=lottery,
-            description=f'Bought ticket #{ticket_number} for {lottery.name}'
-        )
-
-        # Update user profile
-        profile, _ = UserProfile.objects.get_or_create(user=request.user)
-        profile.total_spent += float(lottery.ticket_price)
-        profile.total_tickets_bought += 1
-        profile.save()
-
-        # Log action
-        AuditLog.objects.create(
-            user=request.user,
-            action='BUY_TICKET',
-            description=f'Bought ticket #{ticket_number} for lottery: {lottery.name}'
-        )
-
-        # Send ticket purchase confirmation email asynchronously
-        send_ticket_purchase_confirmation_task.delay(
-            str(request.user.id),
-            str(ticket.id),
-            str(lottery.id)
-        )
+        # Fire-and-forget email notification
+        try:
+            send_ticket_purchase_confirmation_task.delay(
+                str(request.user.id),
+                str(ticket.id),
+                str(lottery.id)
+            )
+        except Exception:
+            pass  # Email failure should not block purchase
 
         return Response(
             {

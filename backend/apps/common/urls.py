@@ -10,5 +10,6 @@ urlpatterns = [
     path('', views.health_check, name='health_check'),
     path('db/', views.health_db, name='health_db'),
     path('cache/', views.health_cache, name='health_cache'),
+    path('ready/', views.health_ready, name='health_ready'),
 ]
 

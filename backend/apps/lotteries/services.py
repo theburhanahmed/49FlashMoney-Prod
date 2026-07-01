@@ -1,13 +1,19 @@
 """
 Services for lottery operations.
+
+All money movements go through WalletService with idempotency keys
+to guarantee ledger correctness and prevent duplicate processing.
 """
 import secrets
 import logging
+import uuid
 from django.utils import timezone
 from django.db import transaction
 from apps.lotteries.models import Lottery, Ticket, Winner, LotteryDrawLog
 from apps.transactions.models import Transaction
 from apps.users.models import UserProfile, AuditLog
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 from apps.common.exceptions import DrawError, LotteryError
 
 logger = logging.getLogger(__name__)
@@ -75,17 +81,32 @@ class DrawService:
         lottery.status = 'DRAWN'
         lottery.save()
         
-        # Credit prize to winner's wallet
-        winner.user.add_balance(lottery.prize_amount)
+        # Credit prize to winner's wallet via WalletService (creates ledger entry)
+        idempotency_key = f'lottery_prize_{lottery.id}_{winner.id}'
+        WalletService.credit(
+            user=winner.user,
+            amount=lottery.prize_amount,
+            entry_type=LedgerEntry.WINNING,
+            description=f'Prize awarded for winning {lottery.name}',
+            reference_type='LOTTERY',
+            reference_id=str(lottery.id),
+            idempotency_key=idempotency_key,
+            actor='draw_service',
+        )
+        logger.info(
+            f"Prize credited via ledger: user={winner.user.id} "
+            f"amount={lottery.prize_amount} key={idempotency_key}"
+        )
         
-        # Create transaction record
+        # Create transaction record for analytics/reporting
         Transaction.objects.create(
             user=winner.user,
             type='PRIZE_AWARD',
             amount=lottery.prize_amount,
             status='COMPLETED',
             lottery=lottery,
-            description=f'Prize awarded for winning {lottery.name}'
+            description=f'Prize awarded for winning {lottery.name}',
+            reference_id=idempotency_key,
         )
         
         # Update user profile
@@ -166,15 +187,35 @@ class TicketPurchaseService:
         if lottery.available_tickets < quantity:
             raise LotteryError(f'Only {lottery.available_tickets} tickets available')
         
-        # Check user balance
+        # Calculate total cost
         total_cost = lottery.ticket_price * quantity
-        if user.wallet_balance < total_cost:
-            raise LotteryError('Insufficient balance')
         
         # Check max tickets per user
         user_ticket_count = lottery.get_user_ticket_count(user)
         if user_ticket_count + quantity > lottery.max_tickets_per_user:
             raise LotteryError(f'Maximum {lottery.max_tickets_per_user} tickets per user allowed')
+        
+        # Debit from wallet via WalletService (balance check + ledger entry, under row lock)
+        idempotency_key = f'ticket_purchase_{lottery.id}_{user.id}_{uuid.uuid4().hex[:8]}'
+        try:
+            WalletService.debit(
+                user=user,
+                amount=total_cost,
+                entry_type=LedgerEntry.BET,
+                description=f'Purchased {quantity} ticket(s) for {lottery.name}',
+                reference_type='LOTTERY',
+                reference_id=str(lottery.id),
+                idempotency_key=idempotency_key,
+                actor='ticket_purchase_service',
+            )
+        except Exception as e:
+            # Re-raise wallet errors as LotteryError for consistent error handling
+            from apps.wallet.services import InsufficientBalanceError, WalletFrozenError
+            if isinstance(e, InsufficientBalanceError):
+                raise LotteryError('Insufficient balance')
+            if isinstance(e, WalletFrozenError):
+                raise LotteryError('Wallet is frozen')
+            raise
         
         # Generate ticket numbers
         last_ticket = Ticket.objects.filter(lottery=lottery).order_by('ticket_number').last()
@@ -189,21 +230,19 @@ class TicketPurchaseService:
             )
             tickets.append(ticket)
         
-        # Deduct from wallet
-        user.deduct_balance(total_cost)
-        
-        # Update lottery
+        # Update lottery available count
         lottery.available_tickets -= quantity
         lottery.save()
         
-        # Create transaction record
+        # Create transaction record for analytics/reporting
         Transaction.objects.create(
             user=user,
             type='TICKET_PURCHASE',
             amount=total_cost,
             status='COMPLETED',
             lottery=lottery,
-            description=f'Purchased {quantity} ticket(s) for {lottery.name}'
+            description=f'Purchased {quantity} ticket(s) for {lottery.name}',
+            reference_id=idempotency_key,
         )
         
         # Update user profile

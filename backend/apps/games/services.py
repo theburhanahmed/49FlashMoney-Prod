@@ -1,8 +1,12 @@
 """
 Game room services: create, join, start, end.
-Wallet, transactions, responsible gaming, and broadcast via Channels.
+Wallet ledger integration, responsible gaming, and broadcast via Channels.
+
+All money movements go through WalletService so every debit/credit
+creates an immutable ledger entry with idempotency protection.
 """
 import logging
+import uuid
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
@@ -12,6 +16,8 @@ from channels.layers import get_channel_layer
 from apps.users.models import User, UserProfile, AuditLog
 from apps.users.responsible_gaming import ResponsibleGamingService
 from apps.transactions.models import Transaction
+from apps.wallet.services import WalletService, InsufficientBalanceError
+from apps.wallet.models import LedgerEntry
 from .models import GameRoom, GameRoomPlayer, GameState, GameKind
 from .engines import get_engine_for_game_kind
 
@@ -24,6 +30,7 @@ GAME_ENTRY_LIMITS = {
     GameKind.CARROM: (Decimal('0.10'), Decimal('100.00')),
     GameKind.AVIATOR: (Decimal('1.00'), Decimal('1000.00')),
     GameKind.WINGO: (Decimal('1.00'), Decimal('500.00')),
+    GameKind.MINES: (Decimal('1.00'), Decimal('500.00')),
 }
 
 
@@ -82,7 +89,10 @@ def join_room(user, room_id: str):
     join flow where the creator may click "Join" on their own room.
     No auto-start.
     """
-    room = GameRoom.objects.get(id=room_id)
+    try:
+        room = GameRoom.objects.get(id=room_id)
+    except GameRoom.DoesNotExist:
+        raise ValueError('Room not found')
     if room.status != GameRoom.STATUS_WAITING:
         raise ValueError('Room is not waiting for players')
     if room.players.filter(user=user).exists():
@@ -100,19 +110,48 @@ def join_room(user, room_id: str):
 
 
 @transaction.atomic
+def leave_room(user, room_id: str):
+    """Remove user from a WAITING room. Deletes the room if no players remain."""
+    try:
+        room = GameRoom.objects.select_for_update().get(id=room_id)
+    except GameRoom.DoesNotExist:
+        raise ValueError('Room not found')
+    if room.status != GameRoom.STATUS_WAITING:
+        raise ValueError('Can only leave when room is waiting')
+    player = room.players.filter(user=user).first()
+    if not player:
+        raise ValueError('You are not in this room')
+    player.delete()
+    if room.players.count() == 0:
+        room.delete()
+        logger.info(f'Room {room_id} deleted (empty after user {user.id} left)')
+        return None
+    room.refresh_from_db()
+    logger.info(f'User {user.id} left room {room_id}')
+    return room
+
+
+@transaction.atomic
 def start_game(room_id: str, started_by_user=None):
     """
-    Transition WAITING -> IN_PROGRESS: deduct entry fee from each player,
-    create GameState, broadcast state. Any player can start if min_players reached.
+    Transition WAITING -> IN_PROGRESS: debit entry fee from each player
+    through the immutable ledger, create GameState, broadcast state.
     """
-    room = GameRoom.objects.select_for_update().get(id=room_id)
+    try:
+        room = GameRoom.objects.select_for_update().get(id=room_id)
+    except GameRoom.DoesNotExist:
+        raise ValueError('Room not found')
     if room.status != GameRoom.STATUS_WAITING:
         raise ValueError('Room is not in waiting state')
+    # Permission check: only room participants can start the game
+    if started_by_user and not room.players.filter(user=started_by_user).exists():
+        raise ValueError('You must be in the room to start the game')
     players = list(room.players.order_by('position').select_related('user'))
     if len(players) < room.min_players:
         raise ValueError(f'Need at least {room.min_players} players to start')
 
     entry_fee = room.entry_fee
+    # Pre-validate all players before any deductions
     for rp in players:
         u = rp.user
         is_excluded, exclusion_reason = ResponsibleGamingService.check_self_exclusion(u)
@@ -124,14 +163,27 @@ def start_game(room_id: str, started_by_user=None):
         is_valid, error_msg = ResponsibleGamingService.check_loss_limit(u, entry_fee)
         if not is_valid:
             raise ValueError(error_msg or 'Daily loss limit exceeded')
-        if u.wallet_balance < entry_fee:
+        # Check wallet balance through WalletService
+        wallet = WalletService.get_or_create_wallet(u)
+        if wallet.available_balance < entry_fee:
             raise ValueError(f'Insufficient balance for player {u.username}')
 
-    # Deduct and create transactions
+    # Debit each player through the ledger (idempotent per room+player)
     for rp in players:
         u = rp.user
-        u.deduct_balance(entry_fee)
-        rp.balance_snapshot = u.wallet_balance
+        idempotency_key = f'game_entry:{room.id}:{u.id}'
+        WalletService.debit(
+            user=u,
+            amount=entry_fee,
+            entry_type=LedgerEntry.BET,
+            description=f'Game entry: {room.get_game_kind_display()}',
+            reference_type='game_room',
+            reference_id=str(room.id),
+            idempotency_key=idempotency_key,
+            actor='game_service',
+        )
+        wallet = WalletService.get_or_create_wallet(u)
+        rp.balance_snapshot = wallet.balance
         rp.save()
         Transaction.objects.create(
             user=u,
@@ -166,10 +218,17 @@ def start_game(room_id: str, started_by_user=None):
 @transaction.atomic
 def end_game(room_id: str, results: list = None):
     """
-    Set room COMPLETED, set each player result/payout, credit winners, create transactions.
-    results: optional list of dicts { user_id, result, payout }. If None, derived from GameState winner_id.
+    Set room COMPLETED, set each player result/payout, credit winners
+    through the immutable ledger, create transactions.
+
+    ``results`` may be supplied directly or will be derived from:
+    1. engine.get_winners() if available, or
+    2. state_data['winner_id'] for simple single-winner games.
     """
-    room = GameRoom.objects.select_for_update().get(id=room_id)
+    try:
+        room = GameRoom.objects.select_for_update().get(id=room_id)
+    except GameRoom.DoesNotExist:
+        raise ValueError('Room not found')
     if room.status != GameRoom.STATUS_IN_PROGRESS and room.status != GameRoom.STATUS_WAITING:
         raise ValueError('Room is not in progress')
 
@@ -179,21 +238,58 @@ def end_game(room_id: str, results: list = None):
 
     players = list(room.players.select_related('user').order_by('position'))
     pool = room.entry_fee * len(players)
-    state = getattr(room, 'game_state', None)
-    state_data = state.state if state else {}
+    state_obj = getattr(room, 'game_state', None)
+    state_data = state_obj.state if state_obj else {}
 
+    # Build result_map from explicit results, engine helpers, or fallback
     if results:
         result_map = {r['user_id']: r for r in results}
     else:
-        winner_id = state_data.get('winner_id')
-        result_map = {}
-        for rp in players:
-            uid = str(rp.user_id)
-            if uid == winner_id:
-                result_map[uid] = {'user_id': uid, 'result': GameRoomPlayer.RESULT_WON, 'payout': pool}
-            else:
-                result_map[uid] = {'user_id': uid, 'result': GameRoomPlayer.RESULT_LOST, 'payout': Decimal('0')}
+        engine = get_engine_for_game_kind(room.game_kind)
+        if hasattr(engine, 'get_winners') and state_data:
+            winners = engine.get_winners(state_data)
+            result_map = {}
+            winner_uids = set()
+            for w in winners:
+                uid = w['user_id']
+                winner_uids.add(uid)
+                result_map[uid] = {
+                    'user_id': uid,
+                    'result': GameRoomPlayer.RESULT_WON,
+                    'payout': Decimal(str(w.get('payout', 0))),
+                }
+            for rp in players:
+                uid = str(rp.user_id)
+                if uid not in winner_uids:
+                    result_map[uid] = {
+                        'user_id': uid,
+                        'result': GameRoomPlayer.RESULT_LOST,
+                        'payout': Decimal('0'),
+                    }
+            # For simple winner-takes-all games with no get_winners payout
+            if winners and all(w.get('payout', 0) == 0 for w in winners):
+                for uid in winner_uids:
+                    result_map[uid]['payout'] = pool
+        else:
+            # Legacy fallback: single winner_id
+            winner_id = state_data.get('winner_id')
+            result_map = {}
+            for rp in players:
+                uid = str(rp.user_id)
+                if uid == winner_id:
+                    result_map[uid] = {
+                        'user_id': uid,
+                        'result': GameRoomPlayer.RESULT_WON,
+                        'payout': pool,
+                    }
+                else:
+                    result_map[uid] = {
+                        'user_id': uid,
+                        'result': GameRoomPlayer.RESULT_LOST,
+                        'payout': Decimal('0'),
+                    }
 
+    # Apply results and credit winners through ledger
     for rp in players:
         uid = str(rp.user_id)
         r = result_map.get(uid, {'result': GameRoomPlayer.RESULT_LOST, 'payout': Decimal('0')})
@@ -205,7 +301,17 @@ def end_game(room_id: str, results: list = None):
 
         u = rp.user
         if payout > 0:
-            u.add_balance(payout)
+            idempotency_key = f'game_win:{room.id}:{u.id}'
+            WalletService.credit(
+                user=u,
+                amount=payout,
+                entry_type=LedgerEntry.WINNING,
+                description=f'Game win: {room.get_game_kind_display()}',
+                reference_type='game_room',
+                reference_id=str(room.id),
+                idempotency_key=idempotency_key,
+                actor='game_service',
+            )
             Transaction.objects.create(
                 user=u,
                 type='GAME_WIN',

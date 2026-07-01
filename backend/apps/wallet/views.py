@@ -49,8 +49,14 @@ class LedgerHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        limit = min(int(request.query_params.get('limit', 50)), 100)
-        offset = int(request.query_params.get('offset', 0))
+        try:
+            limit = min(int(request.query_params.get('limit', 50)), 100)
+            offset = max(int(request.query_params.get('offset', 0)), 0)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid limit or offset parameter'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         entry_type = request.query_params.get('type')
 
         wallet = WalletService.get_or_create_wallet(request.user)
@@ -154,8 +160,14 @@ class AdminWalletLookupView(APIView):
         wallet = WalletService.get_or_create_wallet(user)
         wallet_data = WalletSerializer(wallet).data
 
-        limit = min(int(request.query_params.get('limit', 50)), 100)
-        offset = int(request.query_params.get('offset', 0))
+        try:
+            limit = min(int(request.query_params.get('limit', 50)), 100)
+            offset = max(int(request.query_params.get('offset', 0)), 0)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid limit or offset parameter'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         entries = wallet.ledger_entries.all()[offset:offset + limit]
         entries_data = LedgerEntrySerializer(entries, many=True).data
 

@@ -1,5 +1,7 @@
 """
 Razorpay service for India-focused payments (UPI, cards, netbanking, wallets).
+
+All balance credits go through WalletService with idempotency keys.
 """
 import logging
 from decimal import Decimal
@@ -9,6 +11,8 @@ from django.utils import timezone
 
 from apps.payments.models import RazorpayOrder
 from apps.transactions.models import Transaction
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +133,24 @@ class RazorpayService:
         user = razorpay_order.user
         amount = razorpay_order.amount
 
-        # Credit user wallet
-        user.add_balance(amount)
+        # Credit user wallet via WalletService (ledger-backed, idempotent)
+        idempotency_key = f'razorpay_deposit_{razorpay_order_id}'
+        WalletService.credit(
+            user=user,
+            amount=amount,
+            entry_type=LedgerEntry.DEPOSIT,
+            description=f"Deposit via Razorpay (UPI/Card/Netbanking) - Order {razorpay_order_id}",
+            reference_type='RAZORPAY_ORDER',
+            reference_id=razorpay_order_id,
+            idempotency_key=idempotency_key,
+            actor='razorpay_service',
+        )
+        logger.info(
+            f"Razorpay deposit credited via ledger: user={user.id} "
+            f"amount={amount} order={razorpay_order_id}"
+        )
 
-        # Create transaction
+        # Create transaction record for analytics/reporting
         transaction = Transaction.objects.create(
             user=user,
             type="DEPOSIT",

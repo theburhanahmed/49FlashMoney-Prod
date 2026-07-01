@@ -217,69 +217,40 @@ class ReferralViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Admin action to approve a referral."""
+        """Admin action to approve a referral (delegates to ReferralService)."""
         if not request.user.is_staff:
             return Response(
                 {'error': 'Only admins can approve referrals.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
+        from apps.referrals.services import ReferralService
+
         referral = self.get_object()
         program = ReferralProgram.get_program()
-        
+
         if program.status != 'ACTIVE':
             return Response(
                 {'error': 'Referral program is not active.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        referral.status = 'BONUS_AWARDED'
-        referral.referrer_bonus = program.referral_bonus_amount
-        referral.referred_user_bonus = program.referred_user_bonus
-        referral.bonus_awarded_at = timezone.now()
-        referral.save()
-        
-        # Create bonus records
-        ReferralBonus.objects.create(
-            user=referral.referrer,
-            referral=referral,
-            bonus_type='REFERRER',
-            amount=program.referral_bonus_amount,
-            status='CREDITED',
-            credited_at=timezone.now()
-        )
-        
-        ReferralBonus.objects.create(
-            user=referral.referred_user,
-            referral=referral,
-            bonus_type='REFERRED',
-            amount=program.referred_user_bonus,
-            status='CREDITED',
-            credited_at=timezone.now()
-        )
-        
-        # Update referral link
-        referral.referrer.referral_link.total_referred += 1
-        referral.referrer.referral_link.total_bonus_earned += program.referral_bonus_amount
-        referral.referrer.referral_link.save()
-        
-        # Credit bonuses to users
-        referral.referrer.add_balance(program.referral_bonus_amount)
-        referral.referred_user.add_balance(program.referred_user_bonus)
-        
-        # Send notification emails
-        from apps.notifications.tasks import send_referral_bonus_credited_task
-        send_referral_bonus_credited_task.delay(
-            str(referral.referrer.id),
-            float(program.referral_bonus_amount),
-            str(referral.id)
-        )
-        send_referral_bonus_credited_task.delay(
-            str(referral.referred_user.id),
-            float(program.referred_user_bonus),
-            str(referral.id)
-        )
-        
+
+        if referral.status == 'BONUS_AWARDED':
+            return Response(
+                {'error': 'Referral bonuses already awarded.'},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Delegate to service (atomic, ledger-backed, idempotent)
+        try:
+            ReferralService.award_referral_bonuses(referral)
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to award bonuses: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        referral.refresh_from_db()
         serializer = self.get_serializer(referral)
         return Response(serializer.data)
 

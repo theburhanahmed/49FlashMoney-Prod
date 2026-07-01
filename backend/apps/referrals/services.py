@@ -1,5 +1,8 @@
 """
 Services for referral operations.
+
+All money movements go through WalletService with idempotency keys
+to guarantee ledger correctness and prevent duplicate processing.
 """
 import logging
 from django.utils import timezone
@@ -10,6 +13,8 @@ from apps.referrals.models import (
 )
 from apps.transactions.models import Transaction
 from apps.users.models import UserProfile
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 from apps.notifications.tasks import send_referral_bonus_credited_task
 from apps.common.exceptions import ReferralError
 
@@ -140,25 +145,51 @@ class ReferralService:
             credited_at=timezone.now()
         )
         
-        # Credit bonuses to wallets
-        referral.referrer.add_balance(program.referral_bonus_amount)
-        referral.referred_user.add_balance(program.referred_user_bonus)
-        
-        # Create transaction records
+        # Credit bonuses via WalletService (creates ledger entries with idempotency)
+        referrer_idem = f'referral_bonus_{referral.id}_referrer'
+        referred_idem = f'referral_bonus_{referral.id}_referred'
+
+        WalletService.credit(
+            user=referral.referrer,
+            amount=program.referral_bonus_amount,
+            entry_type=LedgerEntry.BONUS,
+            description=f'Referral bonus for referring {referral.referred_user.username}',
+            reference_type='REFERRAL',
+            reference_id=str(referral.id),
+            idempotency_key=referrer_idem,
+            actor='referral_service',
+        )
+        WalletService.credit(
+            user=referral.referred_user,
+            amount=program.referred_user_bonus,
+            entry_type=LedgerEntry.BONUS,
+            description=f'Welcome bonus for being referred by {referral.referrer.username}',
+            reference_type='REFERRAL',
+            reference_id=str(referral.id),
+            idempotency_key=referred_idem,
+            actor='referral_service',
+        )
+        logger.info(
+            f"Referral bonuses credited via ledger: referrer={referral.referrer.id} "
+            f"referred={referral.referred_user.id}"
+        )
+
+        # Create transaction records for analytics/reporting
         Transaction.objects.create(
             user=referral.referrer,
             type='REFERRAL_BONUS',
             amount=program.referral_bonus_amount,
             status='COMPLETED',
-            description=f'Referral bonus for referring {referral.referred_user.username}'
+            description=f'Referral bonus for referring {referral.referred_user.username}',
+            reference_id=referrer_idem,
         )
-        
         Transaction.objects.create(
             user=referral.referred_user,
             type='REFERRAL_BONUS',
             amount=program.referred_user_bonus,
             status='COMPLETED',
-            description=f'Welcome bonus for being referred by {referral.referrer.username}'
+            description=f'Welcome bonus for being referred by {referral.referrer.username}',
+            reference_id=referred_idem,
         )
         
         # Update referral link stats

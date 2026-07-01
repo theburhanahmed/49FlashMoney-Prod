@@ -8,7 +8,7 @@ from .serializers import (
     GameRoomDetailSerializer,
     CreateRoomSerializer,
 )
-from .services import create_room, join_room, start_game, end_game
+from .services import create_room, join_room, leave_room, start_game, end_game
 
 
 class GameRoomViewSet(viewsets.GenericViewSet):
@@ -70,19 +70,14 @@ class GameRoomViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):
-        room = self.get_object()
-        if room.status != GameRoom.STATUS_WAITING:
-            return Response({'error': 'Can only leave when room is waiting'}, status=status.HTTP_400_BAD_REQUEST)
-        player = room.players.filter(user=request.user).first()
-        if not player:
-            return Response({'error': 'You are not in this room'}, status=status.HTTP_400_BAD_REQUEST)
-        player.delete()
-        if room.players.count() == 0:
-            room.delete()
-            return Response({'status': 'room_deleted'})
-        room.refresh_from_db()
-        serializer = GameRoomDetailSerializer(room)
-        return Response(serializer.data)
+        try:
+            room = leave_room(request.user, str(pk))
+            if room is None:
+                return Response({'status': 'room_deleted'})
+            serializer = GameRoomDetailSerializer(room)
+            return Response(serializer.data)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):

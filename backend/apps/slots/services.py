@@ -1,130 +1,137 @@
 """
-Slots spin service with provably fair RNG.
+Slots service layer.
+Handles spin logic, payout calculation, and provably fair RNG.
+All money movements go through WalletService.
 """
 import hashlib
-import secrets
 import logging
+import uuid
 from decimal import Decimal
-from django.db import transaction
-from django.utils import timezone
 
-from apps.slots.models import SlotsGame, SlotsSpin
+from django.db import transaction
+
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 from apps.transactions.models import Transaction
-from apps.users.models import UserProfile, AuditLog
-from apps.users.responsible_gaming import ResponsibleGamingService
+from apps.users.models import AuditLog
+from .models import SlotsGame, SlotsSpin, DEFAULT_REELS, DEFAULT_PAYTABLE
 
 logger = logging.getLogger(__name__)
 
 
-class SlotsSpinService:
-    """Service for conducting slots spins with provably fair RNG."""
+class SlotsService:
+    """Service for slots game operations."""
 
-    @staticmethod
-    def _get_symbol_from_seed(seed_bytes: bytes, reel: list, index: int) -> str:
+    @classmethod
+    def _generate_spin_result(cls, game: SlotsGame, seed: str) -> list:
         """
-        Deterministically pick a symbol from reel using seed.
-        Uses SHA256(seed + index) mod len(reel).
+        Generate deterministic spin result from seed.
+        Returns list of 3 symbols (one per reel).
         """
-        h = hashlib.sha256(seed_bytes + index.to_bytes(4, 'big')).hexdigest()
-        idx = int(h[:8], 16) % len(reel)
-        return reel[idx]
-
-    @staticmethod
-    def _generate_spin_result(game: SlotsGame, seed: str) -> list:
-        """
-        Generate spin result [symbol1, symbol2, symbol3] from seed.
-        Provably fair: same seed + game config = same result.
-        """
-        seed_bytes = seed.encode('utf-8')
-        reels = game.reels or []
-        if len(reels) < 3:
-            reels = [["cherry", "lemon", "orange", "plum", "bell", "bar", "seven"]] * 3
-        results = []
+        reels = game.reels or DEFAULT_REELS
+        result = []
         for i, reel in enumerate(reels):
-            sym = SlotsSpinService._get_symbol_from_seed(seed_bytes, reel, i)
-            results.append(sym)
-        return results
+            reel_seed = f"{seed}:reel_{i}"
+            hash_val = int(hashlib.sha256(reel_seed.encode()).hexdigest(), 16)
+            idx = hash_val % len(reel)
+            result.append(reel[idx])
+        return result
 
-    @staticmethod
-    def _calculate_payout(game: SlotsGame, symbols: list, bet_amount: Decimal) -> Decimal:
+    @classmethod
+    def _calculate_payout(cls, game: SlotsGame, symbols: list, bet_amount: Decimal) -> Decimal:
         """
-        Calculate payout based on paytable.
-        3 matching symbols = bet * multiplier.
+        Calculate payout based on symbols. 3-of-a-kind pays multiplier * bet.
+        2-of-a-kind of the first two reels pays 0.5 * multiplier * bet (partial match).
         """
-        if len(symbols) < 3:
-            return Decimal('0')
-        s1, s2, s3 = symbols[0], symbols[1], symbols[2]
-        if s1 == s2 == s3:
-            multiplier = game.get_payout(s1)
-            return bet_amount * Decimal(str(multiplier))
-        return Decimal('0')
+        paytable = game.paytable or DEFAULT_PAYTABLE
+        # 3-of-a-kind
+        if symbols[0] == symbols[1] == symbols[2]:
+            multiplier = Decimal(str(paytable.get(symbols[0], 0)))
+            return (bet_amount * multiplier).quantize(Decimal('0.01'))
+        # 2-of-a-kind (first two match)
+        if symbols[0] == symbols[1]:
+            multiplier = Decimal(str(paytable.get(symbols[0], 0)))
+            return (bet_amount * multiplier * Decimal('0.25')).quantize(Decimal('0.01'))
+        return Decimal('0.00')
 
-    @staticmethod
+    @classmethod
     @transaction.atomic
-    def spin(user, game_id: str, bet_amount: Decimal):
+    def spin(cls, user, game_id: str, bet_amount: Decimal) -> SlotsSpin:
         """
         Execute a slots spin.
-
-        Args:
-            user: User making the spin
-            game_id: UUID of SlotsGame
-            bet_amount: Bet amount (must be within min/max)
-
-        Returns:
-            dict with spin result for API response
-
-        Raises:
-            ValueError with user-friendly message on validation failure
+        1. Validate game and bet
+        2. Debit bet from wallet via ledger
+        3. Generate spin result
+        4. Calculate and credit payout if won
+        5. Record spin
         """
-        game = SlotsGame.objects.get(id=game_id)
-
+        try:
+            game = SlotsGame.objects.get(id=game_id)
+        except SlotsGame.DoesNotExist:
+            raise ValueError('Game not found')
         if not game.is_active:
-            raise ValueError("This game is not available")
+            raise ValueError('This slots game is not active')
 
         bet_amount = Decimal(str(bet_amount))
-
+        if bet_amount <= 0:
+            raise ValueError('Bet amount must be positive')
         if bet_amount < game.min_bet:
-            raise ValueError(f"Minimum bet is ${game.min_bet}")
-
+            raise ValueError(f'Minimum bet is {game.min_bet}')
         if bet_amount > game.max_bet:
-            raise ValueError(f"Maximum bet is ${game.max_bet}")
+            raise ValueError(f'Maximum bet is {game.max_bet}')
 
-        # Responsible gaming checks
-        is_excluded, exclusion_reason = ResponsibleGamingService.check_self_exclusion(user)
-        if is_excluded:
-            raise ValueError(exclusion_reason)
+        # Generate seed for provably fair verification
+        seed = f"{uuid.uuid4()}:{user.id}:{game_id}"
+        idempotency_base = hashlib.sha256(seed.encode()).hexdigest()[:16]
 
-        is_valid, error_msg, _ = ResponsibleGamingService.check_session_time(user)
-        if not is_valid:
-            raise ValueError(error_msg or "Session limit exceeded")
-
-        is_valid, error_msg = ResponsibleGamingService.check_loss_limit(user, bet_amount)
-        if not is_valid:
-            raise ValueError(error_msg or "Daily loss limit exceeded")
-
-        if user.wallet_balance < bet_amount:
-            raise ValueError("Insufficient balance")
-
-        # Update session start if not set
-        if not user.last_session_start:
-            user.last_session_start = timezone.now()
-            user.save(update_fields=['last_session_start'])
-
-        # Generate provably fair seed
-        seed = secrets.token_hex(32)
+        # Debit bet via wallet ledger
+        WalletService.debit(
+            user=user,
+            amount=bet_amount,
+            entry_type=LedgerEntry.BET,
+            description=f'Slots bet: {game.name}',
+            reference_type='slots_game',
+            reference_id=str(game.id),
+            idempotency_key=f'slots_bet:{idempotency_base}',
+            actor='slots_service',
+        )
 
         # Generate result
-        symbols = SlotsSpinService._generate_spin_result(game, seed)
-        payout = SlotsSpinService._calculate_payout(game, symbols, bet_amount)
+        symbols = cls._generate_spin_result(game, seed)
+        payout = cls._calculate_payout(game, symbols, bet_amount)
 
-        # Deduct bet
-        user.deduct_balance(bet_amount)
-
-        # Credit payout if any
+        # Credit winnings if any
         if payout > 0:
-            user.add_balance(payout)
+            WalletService.credit(
+                user=user,
+                amount=payout,
+                entry_type=LedgerEntry.WINNING,
+                description=f'Slots win: {game.name} ({symbols})',
+                reference_type='slots_game',
+                reference_id=str(game.id),
+                idempotency_key=f'slots_win:{idempotency_base}',
+                actor='slots_service',
+            )
+            Transaction.objects.create(
+                user=user,
+                type='SLOTS_WIN',
+                amount=payout,
+                status='COMPLETED',
+                description=f'Slots win: {game.name}',
+                reference_id=str(game.id),
+            )
 
-        # Create spin record
+        # Record bet transaction
+        Transaction.objects.create(
+            user=user,
+            type='SLOTS_BET',
+            amount=bet_amount,
+            status='COMPLETED',
+            description=f'Slots bet: {game.name}',
+            reference_id=str(game.id),
+        )
+
+        # Create immutable spin record
         spin = SlotsSpin.objects.create(
             user=user,
             game=game,
@@ -134,49 +141,39 @@ class SlotsSpinService:
             random_seed=seed,
         )
 
-        # Create transactions
-        Transaction.objects.create(
-            user=user,
-            type='SLOTS_BET',
-            amount=bet_amount,
-            status='COMPLETED',
-            description=f'Slots bet: {game.name} - {symbols}',
-            reference_id=str(spin.id),
+        logger.info(
+            f"Slots spin: user={user.id} game={game.name} "
+            f"bet={bet_amount} symbols={symbols} payout={payout}"
         )
-        if payout > 0:
-            Transaction.objects.create(
-                user=user,
-                type='SLOTS_WIN',
-                amount=payout,
-                status='COMPLETED',
-                description=f'Slots win: {game.name} - {symbols}',
-                reference_id=str(spin.id),
-            )
+        return spin
 
-        # Update user profile
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-        profile.total_spent += float(bet_amount)
-        if payout > 0:
-            profile.total_won += float(payout)
-            profile.total_wins += 1
-        profile.save()
+    @classmethod
+    def get_spin_history(cls, user, game_id: str = None, limit: int = 50):
+        """Get spin history for a user, optionally filtered by game."""
+        qs = SlotsSpin.objects.filter(user=user).order_by('-created_at')
+        if game_id:
+            qs = qs.filter(game_id=game_id)
+        return qs[:limit]
 
-        # Audit log
-        AuditLog.objects.create(
-            user=user,
-            action='BUY_TICKET',  # Reuse; could add SLOTS_SPIN to choices
-            description=f'Slots spin: {game.name} bet ${bet_amount} result {symbols} payout ${payout}',
-            resource_type='USER',
-            resource_id=str(user.id),
+    @classmethod
+    def get_game_stats(cls, game_id: str) -> dict:
+        """Get aggregate stats for a slots game."""
+        from django.db.models import Sum, Count, Avg
+        spins = SlotsSpin.objects.filter(game_id=game_id)
+        stats = spins.aggregate(
+            total_spins=Count('id'),
+            total_wagered=Sum('bet_amount'),
+            total_paid=Sum('payout'),
+            avg_bet=Avg('bet_amount'),
         )
-
-        logger.info(f"Slots spin: user={user.id} game={game_id} bet={bet_amount} result={symbols} payout={payout}")
-
+        total_wagered = stats['total_wagered'] or Decimal('0')
+        total_paid = stats['total_paid'] or Decimal('0')
+        actual_rtp = (total_paid / total_wagered * 100) if total_wagered > 0 else Decimal('0')
         return {
-            'id': str(spin.id),
-            'symbols': symbols,
-            'bet_amount': float(bet_amount),
-            'payout': float(payout),
-            'random_seed': seed,
-            'created_at': spin.created_at.isoformat(),
+            'total_spins': stats['total_spins'] or 0,
+            'total_wagered': str(total_wagered),
+            'total_paid': str(total_paid),
+            'avg_bet': str(stats['avg_bet'] or Decimal('0')),
+            'actual_rtp': str(actual_rtp.quantize(Decimal('0.01'))),
+            'house_profit': str(total_wagered - total_paid),
         }

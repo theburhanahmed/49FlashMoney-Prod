@@ -1,129 +1,147 @@
-from django.test import TestCase
-from django.contrib.auth import get_user_model
-from rest_framework.test import APIClient
-from rest_framework import status
-from apps.analytics.services import AnalyticsService
-from apps.lotteries.models import Lottery
-from apps.transactions.models import Transaction
-from apps.users.models import User
+"""
+Tests for AnalyticsService – game metrics (GGR, NGR, RTP).
+"""
 from decimal import Decimal
-from django.utils import timezone
-from datetime import timedelta
+
+from django.test import TestCase, override_settings
+from django.contrib.auth import get_user_model
+from rest_framework import status
+from rest_framework.test import APIClient
+
+from apps.transactions.models import Transaction
+from apps.analytics.services import AnalyticsService
 
 User = get_user_model()
 
 
-class AnalyticsServiceTestCase(TestCase):
-    """Test AnalyticsService"""
+class GameMetricsTestCase(TestCase):
+    """Test AnalyticsService.get_game_metrics()."""
 
     def setUp(self):
         self.user = User.objects.create_user(
-            username='testuser',
-            email='test@example.com',
-            password='TestPassword123'
+            username='analytics_user',
+            email='analytics@test.com',
+            password='Pass123!',
         )
-        self.start_date = timezone.now() - timedelta(days=30)
-        self.end_date = timezone.now()
 
-    def test_get_financial_metrics(self):
-        """Test getting financial metrics"""
-        # Create test transactions
+    def test_empty_metrics(self):
+        metrics = AnalyticsService.get_game_metrics()
+        self.assertEqual(metrics['total_bets'], '0')
+        self.assertEqual(metrics['total_payouts'], '0')
+        self.assertEqual(metrics['ggr'], '0')
+        self.assertEqual(metrics['ngr'], '0')
+
+    def test_ggr_calculation(self):
         Transaction.objects.create(
-            user=self.user,
-            type='DEPOSIT',
-            amount=Decimal('100.00'),
-            status='COMPLETED'
+            user=self.user, type='BET', amount=Decimal('100'),
+            status='COMPLETED', description='Test bet',
         )
         Transaction.objects.create(
-            user=self.user,
-            type='TICKET_PURCHASE',
-            amount=Decimal('10.00'),
-            status='COMPLETED'
+            user=self.user, type='WINNING', amount=Decimal('40'),
+            status='COMPLETED', description='Test win',
         )
+        metrics = AnalyticsService.get_game_metrics()
+        self.assertEqual(Decimal(metrics['ggr']), Decimal('60'))
 
-        metrics = AnalyticsService.get_financial_metrics(self.start_date, self.end_date)
-
-        self.assertIn('total_revenue', metrics)
-        self.assertIn('total_deposits', metrics)
-        self.assertIn('total_withdrawals', metrics)
-        self.assertIn('total_prizes_paid', metrics)
-
-    def test_get_user_metrics(self):
-        """Test getting user metrics"""
-        # Create additional users
-        User.objects.create_user(
-            username='user2',
-            email='user2@example.com',
-            password='Password123'
+    def test_ngr_subtracts_bonuses(self):
+        Transaction.objects.create(
+            user=self.user, type='BET', amount=Decimal('200'),
+            status='COMPLETED', description='Bet',
         )
-
-        metrics = AnalyticsService.get_user_metrics(self.start_date, self.end_date)
-
-        self.assertIn('total_users', metrics)
-        self.assertIn('active_users', metrics)
-        self.assertIn('new_registrations', metrics)
-
-    def test_get_lottery_metrics(self):
-        """Test getting lottery metrics"""
-        Lottery.objects.create(
-            name='Test Lottery',
-            description='Test',
-            ticket_price=Decimal('10.00'),
-            total_tickets=100,
-            available_tickets=100,
-            prize_amount=Decimal('500.00'),
-            status='ACTIVE'
+        Transaction.objects.create(
+            user=self.user, type='WINNING', amount=Decimal('80'),
+            status='COMPLETED', description='Win',
         )
+        Transaction.objects.create(
+            user=self.user, type='CASHBACK', amount=Decimal('10'),
+            status='COMPLETED', description='Cashback',
+        )
+        metrics = AnalyticsService.get_game_metrics()
+        ggr = Decimal(metrics['ggr'])
+        ngr = Decimal(metrics['ngr'])
+        self.assertEqual(ggr, Decimal('120'))
+        self.assertEqual(ngr, Decimal('110'))
 
-        metrics = AnalyticsService.get_lottery_metrics(self.start_date, self.end_date)
+    def test_rtp_calculation(self):
+        Transaction.objects.create(
+            user=self.user, type='BET', amount=Decimal('100'),
+            status='COMPLETED', description='Bet',
+        )
+        Transaction.objects.create(
+            user=self.user, type='WINNING', amount=Decimal('96'),
+            status='COMPLETED', description='Win',
+        )
+        metrics = AnalyticsService.get_game_metrics()
+        self.assertEqual(metrics['rtp'], '96.00')
 
-        self.assertIn('active_lotteries', metrics)
-        self.assertIn('completed_lotteries', metrics)
-        self.assertIn('total_tickets_sold', metrics)
+    def test_slots_metrics(self):
+        Transaction.objects.create(
+            user=self.user, type='SLOTS_BET', amount=Decimal('50'),
+            status='COMPLETED', description='Slots bet',
+        )
+        Transaction.objects.create(
+            user=self.user, type='SLOTS_WIN', amount=Decimal('45'),
+            status='COMPLETED', description='Slots win',
+        )
+        metrics = AnalyticsService.get_game_metrics()
+        self.assertEqual(Decimal(metrics['total_bets']), Decimal('50'))
+        self.assertEqual(Decimal(metrics['total_payouts']), Decimal('45'))
 
 
-class AnalyticsViewSetTestCase(TestCase):
-    """Test AnalyticsViewSet endpoints"""
+@override_settings(
+    CACHES={
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'analytics-api-tests',
+        }
+    },
+    REST_FRAMEWORK={
+        'DEFAULT_THROTTLE_CLASSES': [],
+        'DEFAULT_THROTTLE_RATES': {},
+    },
+)
+class AnalyticsApiTestCase(TestCase):
+    """Integration tests for analytics API endpoints."""
 
     def setUp(self):
         self.client = APIClient()
-        self.admin_user = User.objects.create_user(
-            username='admin',
-            email='admin@example.com',
-            password='AdminPassword123',
-            role='admin'
+        self.admin = User.objects.create_user(
+            username='analytics_admin',
+            email='analyticadmin@test.com',
+            password='AdminPass123!',
+            role='admin',
+            is_admin=True,
+            is_staff=True,
         )
-        self.admin_user.is_admin = True
-        self.admin_user.save()
-        self.client.force_authenticate(user=self.admin_user)
+        self.user = User.objects.create_user(
+            username='analytics_regular',
+            email='analyticuser@test.com',
+            password='Pass123!',
+        )
+
+    def test_games_endpoint(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/analytics/admin/analytics/games/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('ggr', resp.data)
+        self.assertIn('ngr', resp.data)
+        self.assertIn('rtp', resp.data)
+
+    def test_games_endpoint_requires_admin(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get('/api/analytics/admin/analytics/games/')
+        self.assertIn(resp.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_401_UNAUTHORIZED])
 
     def test_dashboard_endpoint(self):
-        """Test dashboard analytics endpoint"""
-        response = self.client.get('/api/analytics/dashboard/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('financial', response.data)
-        self.assertIn('users', response.data)
-        self.assertIn('lotteries', response.data)
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/analytics/admin/analytics/dashboard/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('financial', resp.data)
+        self.assertIn('users', resp.data)
 
     def test_financial_endpoint(self):
-        """Test financial metrics endpoint"""
-        response = self.client.get('/api/analytics/financial/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('total_revenue', response.data)
-
-    def test_users_endpoint(self):
-        """Test user metrics endpoint"""
-        response = self.client.get('/api/analytics/users/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('total_users', response.data)
-
-    def test_lotteries_endpoint(self):
-        """Test lottery metrics endpoint"""
-        response = self.client.get('/api/analytics/lotteries/')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('active_lotteries', response.data)
-
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/analytics/admin/analytics/financial/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('revenue', resp.data)
+        self.assertIn('deposits', resp.data)

@@ -58,56 +58,27 @@ def process_pending_referrals():
         try:
             # Check if referred user has made required deposit
             from apps.transactions.models import Transaction
-            
+
             total_deposits = Transaction.objects.filter(
                 user=referral.referred_user,
                 type='DEPOSIT',
                 status='COMPLETED'
             ).aggregate(total=Sum('amount'))['total'] or 0
-            
+
             if float(total_deposits) >= float(program.minimum_referral_deposit):
                 # Requirements met, qualify the referral
                 referral.status = 'QUALIFIED'
                 referral.referred_user_deposit = total_deposits
                 referral.deposit_date = timezone.now()
                 referral.save()
-                
-                # Award bonuses
-                from django.utils import timezone as tz
-                
-                # Referrer bonus
-                referrer_bonus = ReferralBonus.objects.create(
-                    user=referral.referrer,
-                    referral=referral,
-                    bonus_type='REFERRER',
-                    amount=program.referral_bonus_amount,
-                    status='CREDITED',
-                    credited_at=tz.now()
-                )
-                
-                # Credit to referrer's referral balance
-                referral.referrer.add_balance(program.referral_bonus_amount)
-                
-                # Referred user bonus
-                referred_bonus = ReferralBonus.objects.create(
-                    user=referral.referred_user,
-                    referral=referral,
-                    bonus_type='REFERRED',
-                    amount=program.referred_user_bonus,
-                    status='CREDITED',
-                    credited_at=tz.now()
-                )
-                
-                # Credit to referred user's wallet
-                referral.referred_user.add_balance(program.referred_user_bonus)
-                
-                referral.status = 'BONUS_AWARDED'
-                referral.bonus_awarded_at = tz.now()
-                referral.save()
-                
+
+                # Delegate bonus awarding to service (ledger-backed, idempotent)
+                from apps.referrals.services import ReferralService
+                ReferralService.award_referral_bonuses(referral)
+
                 processed_count += 1
                 logger.info(f'Processed referral {referral.id}, bonuses awarded')
-                
+
         except Exception as e:
             logger.error(f'Error processing referral {referral.id}: {str(e)}', exc_info=True)
     

@@ -264,3 +264,62 @@ def _handle_resolve(state: dict, room_id: str, version: int) -> dict:
     state['winner_id'] = 'WINGO_RESOLVED'
     state['phase'] = 'finished'
     return state
+
+
+def game_kind() -> str:
+    return 'WINGO'
+
+
+def default_config() -> dict:
+    return {
+        'min_bet': str(DEFAULT_MIN_BET),
+        'max_bet': str(DEFAULT_MAX_BET),
+        'payouts': {k: str(v) for k, v in DEFAULT_PAYOUTS.items()},
+        'round_duration_seconds': 60,
+    }
+
+
+def is_finished(state: dict) -> bool:
+    return state.get('phase') == 'finished'
+
+
+def get_winners(state: dict) -> list:
+    """Return list of winner dicts for players who won bets."""
+    if not is_finished(state):
+        return []
+    winners = []
+    for bet in state.get('bets', []):
+        if bet.get('won') and bet.get('payout') and Decimal(bet['payout']) > 0:
+            winners.append({
+                'user_id': bet['user_id'],
+                'result': 'WON',
+                'payout': Decimal(bet['payout']),
+            })
+    return winners
+
+
+def get_public_state(state: dict) -> dict:
+    """Wingo has no secrets to hide; return full state."""
+    import copy
+    return copy.deepcopy(state)
+
+
+def validate_config(config: dict) -> list:
+    errors = []
+    if 'min_bet' in config and 'max_bet' in config:
+        if Decimal(str(config['min_bet'])) >= Decimal(str(config['max_bet'])):
+            errors.append('min_bet must be less than max_bet')
+    dur = config.get('round_duration_seconds', 60)
+    if dur < 5 or dur > 600:
+        errors.append('round_duration_seconds must be between 5 and 600')
+    return errors
+
+
+def validate_bet(state: dict, user_id: str, amount: Decimal, action: dict):
+    if state.get('phase') != 'betting':
+        return 'Bets can only be placed during betting phase'
+    min_bet = Decimal(state.get('config', {}).get('min_bet', '1.00'))
+    max_bet = Decimal(state.get('config', {}).get('max_bet', '500.00'))
+    if amount < min_bet or amount > max_bet:
+        return f'Bet must be between {min_bet} and {max_bet}'
+    return None

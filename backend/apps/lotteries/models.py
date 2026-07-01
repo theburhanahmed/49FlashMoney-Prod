@@ -175,7 +175,18 @@ class Winner(models.Model):
 
     def claim_prize(self):
         if not self.is_claimed:
-            self.user.add_balance(self.prize_amount)
+            from apps.wallet.services import WalletService
+            from apps.wallet.models import LedgerEntry
+            WalletService.credit(
+                user=self.user,
+                amount=self.prize_amount,
+                entry_type=LedgerEntry.WINNING,
+                description=f'Prize claimed for {self.lottery.name}',
+                reference_type='LOTTERY_WINNER',
+                reference_id=str(self.id),
+                idempotency_key=f'winner_claim_{self.id}',
+                actor='winner_model',
+            )
             self.is_claimed = True
             self.claimed_at = timezone.now()
             self.save()

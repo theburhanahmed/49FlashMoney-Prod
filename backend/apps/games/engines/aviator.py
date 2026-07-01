@@ -239,3 +239,59 @@ def get_public_state(state: dict) -> dict:
     if public['phase'] == 'flying' or public['phase'] == 'betting':
         public.pop('crash_point', None)
     return public
+
+
+def game_kind() -> str:
+    return 'AVIATOR'
+
+
+def default_config() -> dict:
+    return {
+        'tick_increment': DEFAULT_TICK_INCREMENT,
+        'min_bet': str(DEFAULT_MIN_BET),
+        'max_bet': str(DEFAULT_MAX_BET),
+        'house_edge': 0.03,
+    }
+
+
+def is_finished(state: dict) -> bool:
+    return state.get('phase') == 'finished'
+
+
+def get_winners(state: dict) -> list:
+    """Return list of winner dicts for players who cashed out."""
+    if not is_finished(state):
+        return []
+    winners = []
+    for bet in state.get('bets', []):
+        if bet.get('cashed_out') and bet.get('payout') and Decimal(bet['payout']) > 0:
+            winners.append({
+                'user_id': bet['user_id'],
+                'result': 'WON',
+                'payout': Decimal(bet['payout']),
+            })
+    return winners
+
+
+def validate_config(config: dict) -> list:
+    errors = []
+    if 'min_bet' in config and 'max_bet' in config:
+        if Decimal(str(config['min_bet'])) >= Decimal(str(config['max_bet'])):
+            errors.append('min_bet must be less than max_bet')
+    he = config.get('house_edge', 0.03)
+    if not (0 < he < 1):
+        errors.append('house_edge must be between 0 and 1')
+    return errors
+
+
+def validate_bet(state: dict, user_id: str, amount: Decimal, action: dict):
+    if state.get('phase') != 'betting':
+        return 'Bets can only be placed during betting phase'
+    for bet in state.get('bets', []):
+        if bet['user_id'] == str(user_id):
+            return 'Already placed a bet this round'
+    min_bet = Decimal(state.get('config', {}).get('min_bet', '1.00'))
+    max_bet = Decimal(state.get('config', {}).get('max_bet', '1000.00'))
+    if amount < min_bet or amount > max_bet:
+        return f'Bet must be between {min_bet} and {max_bet}'
+    return None

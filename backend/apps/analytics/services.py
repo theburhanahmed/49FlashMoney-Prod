@@ -244,3 +244,114 @@ class AnalyticsService:
         
         return data_points
 
+    # ── Game-specific metrics ────────────────────────────────────────
+
+    @staticmethod
+    def get_game_metrics(start_date=None, end_date=None):
+        """
+        Get game platform KPIs: GGR, NGR, RTP, and per-game breakdown.
+
+        GGR (Gross Gaming Revenue) = total bets - total payouts
+        NGR (Net Gaming Revenue) = GGR - bonuses
+        RTP (Return to Player %) = (total payouts / total bets) * 100
+        """
+        from apps.games.models import GameRoom, GameRoomPlayer
+        from apps.slots.models import SlotsSpin
+
+        if start_date is None:
+            start_date = timezone.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = timezone.now()
+
+        # Game room bets and payouts
+        room_bets = Transaction.objects.filter(
+            type__in=['BET', 'GAME_BET'],
+            status='COMPLETED',
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        room_payouts = Transaction.objects.filter(
+            type__in=['WINNING', 'GAME_WIN'],
+            status='COMPLETED',
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Slots bets and payouts
+        slots_bets = Transaction.objects.filter(
+            type='SLOTS_BET',
+            status='COMPLETED',
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        slots_payouts = Transaction.objects.filter(
+            type='SLOTS_WIN',
+            status='COMPLETED',
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Bonuses paid
+        bonuses = Transaction.objects.filter(
+            type__in=['CASHBACK', 'BONUS'],
+            status='COMPLETED',
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        total_bets = room_bets + slots_bets
+        total_payouts = room_payouts + slots_payouts
+        ggr = total_bets - total_payouts
+        ngr = ggr - bonuses
+        rtp = (total_payouts / total_bets * 100) if total_bets > 0 else Decimal('0')
+
+        # Per-game-kind breakdown
+        game_breakdown = {}
+        rooms = GameRoom.objects.filter(
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).values('game_kind').annotate(
+            room_count=Count('id'),
+            player_count=Count('players'),
+        )
+        for row in rooms:
+            game_breakdown[row['game_kind']] = {
+                'rooms': row['room_count'],
+                'players': row['player_count'],
+            }
+
+        # Slots breakdown
+        slot_stats = SlotsSpin.objects.filter(
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        ).aggregate(
+            spin_count=Count('id'),
+            total_wagered=Sum('bet_amount'),
+            total_paid=Sum('payout'),
+        )
+        slot_wagered = slot_stats['total_wagered'] or Decimal('0')
+        slot_paid = slot_stats['total_paid'] or Decimal('0')
+        slot_rtp = (slot_paid / slot_wagered * 100) if slot_wagered > 0 else Decimal('0')
+
+        return {
+            'total_bets': str(total_bets),
+            'total_payouts': str(total_payouts),
+            'ggr': str(ggr),
+            'ngr': str(ngr),
+            'rtp': str(rtp.quantize(Decimal('0.01'))),
+            'bonuses_paid': str(bonuses),
+            'game_breakdown': game_breakdown,
+            'slots': {
+                'total_spins': slot_stats['spin_count'] or 0,
+                'total_wagered': str(slot_wagered),
+                'total_paid': str(slot_paid),
+                'rtp': str(slot_rtp.quantize(Decimal('0.01'))),
+            },
+            'period': {
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat(),
+            },
+        }
+

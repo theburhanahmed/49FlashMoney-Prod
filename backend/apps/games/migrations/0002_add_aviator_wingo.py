@@ -1,5 +1,5 @@
 """
-Add AVIATOR and WINGO to GameRoom.game_kind choices.
+Add AVIATOR, WINGO, and MINES to GameRoom.game_kind choices.
 """
 from django.db import migrations, models
 
@@ -21,6 +21,7 @@ class Migration(migrations.Migration):
                     ('CARROM', 'Carrom'),
                     ('AVIATOR', 'Aviator'),
                     ('WINGO', 'Wingo'),
+                    ('MINES', 'Mines'),
                 ],
                 max_length=32,
             ),

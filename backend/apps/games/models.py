@@ -14,6 +14,8 @@ class GameKind:
     CARROM = 'CARROM'
     AVIATOR = 'AVIATOR'
     WINGO = 'WINGO'
+    MINES = 'MINES'
+    SCRATCH_CARD = 'SCRATCH_CARD'
 
     CHOICES = [
         (SNAKES_LADDERS, 'Snakes & Ladders'),
@@ -21,6 +23,8 @@ class GameKind:
         (CARROM, 'Carrom'),
         (AVIATOR, 'Aviator'),
         (WINGO, 'Wingo'),
+        (MINES, 'Mines'),
+        (SCRATCH_CARD, 'Scratch Card'),
     ]
 
 

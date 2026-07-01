@@ -41,3 +41,45 @@ class Promotion(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.status})"
+
+
+class PromotionClaim(models.Model):
+    """Records a single user's claim of a promotion and its bonus lifecycle."""
+
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('CREDITED', 'Credited'),
+        ('COMPLETED', 'Completed'),
+        ('EXPIRED', 'Expired'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='promotion_claims',
+    )
+    promotion = models.ForeignKey(
+        Promotion,
+        on_delete=models.CASCADE,
+        related_name='claims',
+    )
+    bonus_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    deposit_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    wagering_remaining = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00')
+    )
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default='PENDING'
+    )
+    claimed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'promotion_claims'
+        unique_together = ['user', 'promotion']
+        ordering = ['-claimed_at']
+
+    def __str__(self):
+        return f"Claim({self.user_id}, {self.promotion.name}) bonus={self.bonus_amount}"

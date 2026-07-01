@@ -229,3 +229,27 @@ class AnalyticsViewSet(viewsets.ViewSet):
         
         return ReportService.export_transactions(start_date, end_date, filters)
 
+    @action(detail=False, methods=['get'])
+    def games(self, request):
+        """Get game platform KPIs: GGR, NGR, RTP, per-game breakdown."""
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+
+        if start_date:
+            try:
+                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                if timezone.is_naive(start_date):
+                    start_date = timezone.make_aware(start_date)
+            except Exception:
+                start_date = None
+        if end_date:
+            try:
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                if timezone.is_naive(end_date):
+                    end_date = timezone.make_aware(end_date)
+            except Exception:
+                end_date = None
+
+        metrics = AnalyticsService.get_game_metrics(start_date, end_date)
+        return Response(metrics)
+

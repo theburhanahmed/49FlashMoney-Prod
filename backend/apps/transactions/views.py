@@ -13,6 +13,8 @@ from apps.transactions.serializers import (
 from apps.transactions.services import WithdrawalService
 from apps.users.models import AuditLog
 from apps.users.permissions import IsAdminUser
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 from apps.notifications.tasks import send_withdrawal_status_task as send_withdrawal_status_email
 
 
@@ -247,7 +249,9 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def approve(self, request, pk=None):
-        """Approve withdrawal (admin only)"""
+        """Approve withdrawal (admin only). Debit via WalletService (ledger-backed)."""
+        from django.db import transaction as db_transaction
+
         withdrawal = self.get_object()
 
         if withdrawal.status != 'REQUESTED':
@@ -257,31 +261,52 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
             )
 
         admin_notes = request.data.get('admin_notes', '')
+        idempotency_key = f'withdrawal_approve_{withdrawal.id}'
 
-        # Deduct from user wallet
-        withdrawal.user.deduct_balance(withdrawal.amount)
+        try:
+            with db_transaction.atomic():
+                # Debit from wallet via WalletService (balance check + ledger entry)
+                WalletService.debit(
+                    user=withdrawal.user,
+                    amount=withdrawal.amount,
+                    entry_type=LedgerEntry.WITHDRAWAL,
+                    description=f'Withdrawal approved #{withdrawal.id}',
+                    reference_type='WITHDRAWAL',
+                    reference_id=str(withdrawal.id),
+                    idempotency_key=idempotency_key,
+                    actor=f'admin:{request.user.id}',
+                )
 
-        # Update withdrawal
-        withdrawal.status = 'APPROVED'
-        withdrawal.processed_at = timezone.now()
-        if admin_notes:
-            withdrawal.remarks = f"{withdrawal.remarks}\nAdmin Notes: {admin_notes}" if withdrawal.remarks else f"Admin Notes: {admin_notes}"
-        withdrawal.save()
+                # Update withdrawal
+                withdrawal.status = 'APPROVED'
+                withdrawal.processed_at = timezone.now()
+                if admin_notes:
+                    withdrawal.remarks = f"{withdrawal.remarks}\nAdmin Notes: {admin_notes}" if withdrawal.remarks else f"Admin Notes: {admin_notes}"
+                withdrawal.save()
 
-        # Update transaction
-        if withdrawal.transaction:
-            withdrawal.transaction.status = 'COMPLETED'
-            withdrawal.transaction.completed_at = timezone.now()
-            withdrawal.transaction.save()
+                # Update transaction
+                if withdrawal.transaction:
+                    withdrawal.transaction.status = 'COMPLETED'
+                    withdrawal.transaction.completed_at = timezone.now()
+                    withdrawal.transaction.save()
 
-        # Log action
-        AuditLog.objects.create(
-            user=request.user,
-            action='WITHDRAW',
-            description=f'Approved withdrawal of ${withdrawal.amount} for {withdrawal.user.username}'
-        )
+                # Log action
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='WITHDRAW',
+                    description=f'Approved withdrawal of ${withdrawal.amount} for {withdrawal.user.username}'
+                )
+        except Exception as e:
+            from apps.wallet.services import InsufficientBalanceError, WalletFrozenError, DuplicateTransactionError
+            if isinstance(e, InsufficientBalanceError):
+                return Response({'error': 'Insufficient balance'}, status=status.HTTP_400_BAD_REQUEST)
+            if isinstance(e, WalletFrozenError):
+                return Response({'error': 'User wallet is frozen'}, status=status.HTTP_400_BAD_REQUEST)
+            if isinstance(e, DuplicateTransactionError):
+                return Response({'error': 'Withdrawal already processed'}, status=status.HTTP_409_CONFLICT)
+            raise
 
-        # Send email notification
+        # Send email notification (outside atomic block)
         send_withdrawal_status_email.delay(str(withdrawal.user.id), str(withdrawal.id), 'Withdrawal approved')
 
         return Response({
@@ -292,6 +317,8 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def reject(self, request, pk=None):
         """Reject withdrawal (admin only)"""
+        from django.db import transaction as db_transaction
+
         withdrawal = self.get_object()
 
         if withdrawal.status != 'REQUESTED':
@@ -307,25 +334,22 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Update withdrawal
-        withdrawal.status = 'REJECTED'
-        withdrawal.processed_at = timezone.now()
-        withdrawal.remarks = f"{withdrawal.remarks}\nRejection Reason: {rejection_reason}" if withdrawal.remarks else f"Rejection Reason: {rejection_reason}"
-        withdrawal.save()
+        with db_transaction.atomic():
+            withdrawal.status = 'REJECTED'
+            withdrawal.processed_at = timezone.now()
+            withdrawal.remarks = f"{withdrawal.remarks}\nRejection Reason: {rejection_reason}" if withdrawal.remarks else f"Rejection Reason: {rejection_reason}"
+            withdrawal.save()
 
-        # Update transaction
-        if withdrawal.transaction:
-            withdrawal.transaction.status = 'FAILED'
-            withdrawal.transaction.save()
+            if withdrawal.transaction:
+                withdrawal.transaction.status = 'FAILED'
+                withdrawal.transaction.save()
 
-        # Log action
-        AuditLog.objects.create(
-            user=request.user,
-            action='WITHDRAW',
-            description=f'Rejected withdrawal of ${withdrawal.amount} for {withdrawal.user.username}. Reason: {rejection_reason}'
-        )
+            AuditLog.objects.create(
+                user=request.user,
+                action='WITHDRAW',
+                description=f'Rejected withdrawal of ${withdrawal.amount} for {withdrawal.user.username}. Reason: {rejection_reason}'
+            )
 
-        # Send email notification
         send_withdrawal_status_email.delay(str(withdrawal.user.id), str(withdrawal.id), f'Withdrawal rejected: {rejection_reason}')
 
         return Response({
@@ -336,33 +360,35 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def process(self, request, pk=None):
         """Mark withdrawal as processing or completed (admin only)"""
+        from django.db import transaction as db_transaction
+
         withdrawal = self.get_object()
         new_status = request.data.get('status', 'PROCESSING')
-        
+
         if new_status not in ['PROCESSING', 'COMPLETED']:
             return Response(
                 {'error': 'Invalid status. Must be PROCESSING or COMPLETED'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         if withdrawal.status not in ['APPROVED', 'PROCESSING']:
             return Response(
                 {'error': 'Withdrawal must be approved or processing to update status'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        withdrawal.status = new_status
-        if new_status == 'COMPLETED':
-            withdrawal.processed_at = timezone.now()
-            if withdrawal.transaction:
-                withdrawal.transaction.status = 'COMPLETED'
-                withdrawal.transaction.completed_at = timezone.now()
-                withdrawal.transaction.save()
-        withdrawal.save()
-        
-        # Send email notification
+
+        with db_transaction.atomic():
+            withdrawal.status = new_status
+            if new_status == 'COMPLETED':
+                withdrawal.processed_at = timezone.now()
+                if withdrawal.transaction:
+                    withdrawal.transaction.status = 'COMPLETED'
+                    withdrawal.transaction.completed_at = timezone.now()
+                    withdrawal.transaction.save()
+            withdrawal.save()
+
         send_withdrawal_status_email.delay(str(withdrawal.user.id), str(withdrawal.id), f'Withdrawal status updated to {new_status}')
-        
+
         return Response({
             'message': f'Withdrawal marked as {new_status}',
             'withdrawal': WithdrawalRequestSerializer(withdrawal).data
@@ -459,38 +485,58 @@ class AdminTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['post'])
     def refund(self, request, pk=None):
-        """Process refund for a transaction"""
-        transaction = self.get_object()
-        
-        if transaction.status != 'COMPLETED':
+        """Process refund for a transaction. Credit via WalletService (ledger-backed)."""
+        from django.db import transaction as db_transaction
+
+        txn = self.get_object()
+
+        if txn.status != 'COMPLETED':
             return Response(
                 {'error': 'Only completed transactions can be refunded'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         reason = request.data.get('reason', 'Admin refund')
-        
-        # Refund amount to user
-        transaction.user.add_balance(transaction.amount)
-        
-        # Create refund transaction
-        refund_transaction = Transaction.objects.create(
-            user=transaction.user,
-            type='REFUND',
-            amount=transaction.amount,
-            status='COMPLETED',
-            description=f'Refund for transaction {transaction.id}: {reason}',
-            reference_id=str(transaction.id)
-        )
-        
-        # Log action
-        from apps.users.models import AuditLog
-        AuditLog.objects.create(
-            user=request.user,
-            action='WITHDRAWAL',  # Reusing action
-            description=f'Refunded transaction {transaction.id} for user {transaction.user.username}. Reason: {reason}'
-        )
-        
+        idempotency_key = f'refund_{txn.id}'
+
+        try:
+            with db_transaction.atomic():
+                # Credit refund via WalletService (ledger entry + idempotency)
+                WalletService.credit(
+                    user=txn.user,
+                    amount=txn.amount,
+                    entry_type=LedgerEntry.ADJUSTMENT,
+                    description=f'Refund for transaction {txn.id}: {reason}',
+                    reference_type='REFUND',
+                    reference_id=str(txn.id),
+                    idempotency_key=idempotency_key,
+                    actor=f'admin:{request.user.id}',
+                )
+
+                # Create refund transaction record
+                refund_transaction = Transaction.objects.create(
+                    user=txn.user,
+                    type='REFUND',
+                    amount=txn.amount,
+                    status='COMPLETED',
+                    description=f'Refund for transaction {txn.id}: {reason}',
+                    reference_id=idempotency_key,
+                )
+
+                # Log action
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='WITHDRAWAL',
+                    description=f'Refunded transaction {txn.id} for user {txn.user.username}. Reason: {reason}',
+                    resource_type='TRANSACTION',
+                    resource_id=str(txn.id),
+                )
+        except Exception as e:
+            from apps.wallet.services import DuplicateTransactionError
+            if isinstance(e, DuplicateTransactionError):
+                return Response({'error': 'Refund already processed'}, status=status.HTTP_409_CONFLICT)
+            raise
+
         return Response({
             'message': 'Refund processed successfully',
             'refund_transaction': TransactionSerializer(refund_transaction).data
