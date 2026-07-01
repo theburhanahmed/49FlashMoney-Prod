@@ -5,29 +5,67 @@
 - `frontend/` - React + TypeScript + Vite
 - `docs/` - Product requirements documents
 
-## Backend Commands
+## Local Development Quick Start (no Redis/PostgreSQL needed)
+
+```bash
+# --- Backend (Terminal 1) ---
+cd backend
+python3 -m venv venv && source venv/bin/activate   # one-time
+cp .env.example .env                                # one-time
+pip install -r requirements.txt                     # one-time
+python manage.py migrate                            # creates db.sqlite3
+python manage.py createsuperuser                    # one-time
+python manage.py runserver                          # http://localhost:8000
+
+# --- Frontend (Terminal 2) ---
+cd frontend
+npm install                                         # one-time
+npm run dev                                         # http://localhost:5173
+```
+
+Out of the box this uses:
+- **SQLite** (file `backend/db.sqlite3`) -- no PostgreSQL install needed
+- **In-memory cache** -- no Redis needed
+- **In-memory channel layer** -- WebSockets work without Redis
+- **Eager Celery** -- async tasks run synchronously in-process, no broker/worker needed
+- **Console email** -- emails print to terminal instead of sending
+
+### Optional: use Redis locally
+
+If you have Redis running (`brew services start redis` / `docker run -p 6379:6379 redis`), set in `.env`:
+
+```
+REDIS_URL=redis://localhost:6379/0
+```
+
+The development settings will auto-detect this and switch to Redis for cache, channels, and Celery. You'll then need a Celery worker:
+
+```bash
+celery -A lottery worker -l info
+celery -A lottery beat -l info      # optional, for scheduled tasks
+```
+
+### Seed sample data (optional)
+
+```bash
+python manage.py seed_data          # creates test users, lotteries, etc.
+```
+
+## Backend Commands (reference)
 
 ```bash
 cd backend
-
-# Setup (first time)
-cp .env.example .env
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py createsuperuser
-
-# Run development server
-python manage.py runserver
 
 # Run tests
 python manage.py test apps.wallet
 python manage.py test apps.games
 python manage.py test
 
-# Run Celery worker
-celery -A lottery worker -l info
+# Run all tests
+python manage.py test
 
-# Run Celery beat scheduler
+# Celery (only needed when REDIS_URL is set)
+celery -A lottery worker -l info
 celery -A lottery beat -l info
 ```
 
@@ -35,22 +73,15 @@ celery -A lottery beat -l info
 
 ```bash
 cd frontend
-
-# Setup
 npm install
-
-# Run development server
-npm run dev
-
-# Build
-npm run build
-
-# Lint
-npm run lint
+npm run dev       # development server on http://localhost:5173
+npm run build     # production build
+npm run lint      # lint check
 ```
 
 ## Architecture Notes
 
+- **Python 3.9+ compatible** - use `from __future__ import annotations` if you need PEP 604 union types (`X | Y`).
 - **Business logic lives in service layers** (e.g., `apps/wallet/services.py`), NOT in views.
 - **Views are thin** - they validate input and delegate to services.
 - **Wallet uses an immutable ledger** - `LedgerEntry` records are never modified or deleted.

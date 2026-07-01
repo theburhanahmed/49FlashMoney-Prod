@@ -3,6 +3,8 @@ VIP service layer.
 Handles tier progression, cashback calculation, and admin tier management.
 All money movements go through WalletService.
 """
+from __future__ import annotations
+
 import logging
 from datetime import timedelta
 from decimal import Decimal

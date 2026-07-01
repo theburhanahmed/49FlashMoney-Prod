@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Django
+backend/db.sqlite3
+backend/staticfiles/
+backend/media/
+backend/logs/
+
+# Environment files (keep .env.example tracked)
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Coverage
+.coverage
+htmlcov/
