@@ -7,6 +7,7 @@ import logging
 from decimal import Decimal
 
 from django.conf import settings
+from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from apps.payments.models import RazorpayOrder
@@ -113,10 +114,12 @@ class RazorpayService:
             return False
 
     @staticmethod
+    @db_transaction.atomic
     def handle_payment_success(razorpay_order_id, razorpay_payment_id=None):
         """
         Credit user wallet and create transaction for successful Razorpay payment.
         Idempotent: if order already processed, returns existing state.
+        Wrapped in @transaction.atomic to ensure all-or-nothing settlement.
         """
         try:
             razorpay_order = RazorpayOrder.objects.get(

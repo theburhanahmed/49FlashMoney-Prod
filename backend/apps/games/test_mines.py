@@ -10,6 +10,8 @@ from django.contrib.auth import get_user_model
 
 from apps.games.models import GameRoom, GameRoomPlayer, GameKind
 from apps.games.engines import mines
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 
 
 User = get_user_model()
@@ -23,7 +25,11 @@ class MinesEngineTestCase(TestCase):
             username="mines_player",
             email="mines@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
+        )
+        WalletService.credit(
+            user=self.user, amount=Decimal("500.00"),
+            entry_type=LedgerEntry.DEPOSIT,
+            idempotency_key='test_mines_setup',
         )
         self.room = GameRoom.objects.create(
             game_kind=GameKind.MINES,

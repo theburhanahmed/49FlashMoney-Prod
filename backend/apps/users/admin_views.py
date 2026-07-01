@@ -80,34 +80,46 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def adjust_wallet(self, request, pk=None):
-        """Manually adjust user wallet balance"""
+        """Manually adjust user wallet balance via WalletService (ledger-backed)."""
+        from decimal import Decimal
+        from apps.wallet.services import WalletService
+        from apps.wallet.models import LedgerEntry
+
         user = self.get_object()
         amount = request.data.get('amount')
         reason = request.data.get('reason', 'Manual adjustment')
-        
+
         try:
-            amount = float(amount)
-            if amount > 0:
-                user.add_balance(amount)
-            else:
-                user.deduct_balance(abs(amount))
-            
-            from apps.transactions.models import Transaction
-            Transaction.objects.create(
-                user=user,
-                type='ADMIN_ADJUSTMENT',
-                amount=abs(amount),
-                status='COMPLETED',
-                description=f'Admin adjustment: {reason}'
-            )
-            
-            return Response({
-                'message': f'Wallet adjusted by ${abs(amount)}',
-                'new_balance': str(user.wallet_balance)
-            })
-        except (ValueError, TypeError):
+            amount = Decimal(str(amount))
+        except Exception:
             return Response(
                 {'error': 'Invalid amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if amount == 0:
+            return Response(
+                {'error': 'Amount must be non-zero'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        direction = LedgerEntry.CREDIT if amount > 0 else LedgerEntry.DEBIT
+        try:
+            WalletService.admin_adjustment(
+                user=user,
+                amount=abs(amount),
+                direction=direction,
+                reason=reason,
+                admin_user=request.user,
+            )
+            wallet = WalletService.get_or_create_wallet(user)
+            return Response({
+                'message': f'Wallet adjusted by {abs(amount)}',
+                'new_balance': str(wallet.balance)
+            })
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

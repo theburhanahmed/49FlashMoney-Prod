@@ -149,10 +149,6 @@ class WalletService:
         wallet.balance = balance_after
         wallet.save(update_fields=['balance', 'updated_at'])
 
-        # Also update the legacy user.wallet_balance field for backward compat
-        user.wallet_balance = balance_after
-        user.save(update_fields=['wallet_balance'])
-
         logger.info(
             f"Credited {amount} to user {user.id} "
             f"(type={entry_type}, key={idempotency_key})"
@@ -231,10 +227,6 @@ class WalletService:
         wallet.balance = balance_after
         wallet.save(update_fields=['balance', 'updated_at'])
 
-        # Also update the legacy user.wallet_balance field for backward compat
-        user.wallet_balance = balance_after
-        user.save(update_fields=['wallet_balance'])
-
         logger.info(
             f"Debited {amount} from user {user.id} "
             f"(type={entry_type}, key={idempotency_key})"
@@ -300,10 +292,6 @@ class WalletService:
         wallet.reserved_balance = wallet.reserved_balance + amount
         wallet.save(update_fields=['balance', 'reserved_balance', 'updated_at'])
 
-        # Sync legacy field
-        user.wallet_balance = wallet.balance
-        user.save(update_fields=['wallet_balance'])
-
         logger.info(f"Reserved {amount} for user {user.id} (ref={reference_id})")
         return entry
 
@@ -363,9 +351,6 @@ class WalletService:
         wallet.reserved_balance = wallet.reserved_balance - amount
         wallet.save(update_fields=['balance', 'reserved_balance', 'updated_at'])
 
-        user.wallet_balance = wallet.balance
-        user.save(update_fields=['wallet_balance'])
-
         logger.info(f"Released reservation of {amount} for user {user.id}")
         return entry
 
@@ -376,8 +361,8 @@ class WalletService:
         Returns a dict with derived_balance, cached_balance, and match status.
         """
         wallet = cls.get_or_create_wallet(user)
-        derived = wallet.derive_balance_from_ledger()
-        cached = wallet.balance
+        derived = wallet.derive_balance_from_ledger().quantize(Decimal('0.01'))
+        cached = wallet.balance.quantize(Decimal('0.01'))
         match = derived == cached
 
         if not match:
@@ -391,7 +376,7 @@ class WalletService:
             'derived_balance': str(derived),
             'cached_balance': str(cached),
             'match': match,
-            'difference': str(derived - cached),
+            'difference': str((derived - cached).quantize(Decimal('0.01'))),
         }
 
     @classmethod

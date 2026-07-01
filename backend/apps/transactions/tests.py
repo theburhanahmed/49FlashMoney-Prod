@@ -54,11 +54,17 @@ class WithdrawalServiceTestCase(TestCase):
     """Test WithdrawalService"""
 
     def setUp(self):
+        from apps.wallet.services import WalletService
+        from apps.wallet.models import LedgerEntry
         self.user = User.objects.create_user(
             username='testuser',
             email='test@example.com',
             password='TestPassword123',
-            wallet_balance=Decimal('100.00')
+        )
+        WalletService.credit(
+            user=self.user, amount=Decimal('100.00'),
+            entry_type=LedgerEntry.DEPOSIT,
+            idempotency_key='test_setup_withdrawal_svc',
         )
 
     def test_validate_withdrawal_request_success(self):
@@ -96,12 +102,18 @@ class WithdrawalRequestViewSetTestCase(TestCase):
     """Test WithdrawalRequestViewSet"""
 
     def setUp(self):
+        from apps.wallet.services import WalletService
+        from apps.wallet.models import LedgerEntry
         self.client = APIClient()
         self.user = User.objects.create_user(
             username='testuser',
             email='test@example.com',
             password='TestPassword123',
-            wallet_balance=Decimal('100.00')
+        )
+        WalletService.credit(
+            user=self.user, amount=Decimal('100.00'),
+            entry_type=LedgerEntry.DEPOSIT,
+            idempotency_key='test_setup_withdrawal_view',
         )
         self.admin_user = User.objects.create_user(
             username='admin',

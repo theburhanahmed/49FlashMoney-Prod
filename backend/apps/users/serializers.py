@@ -10,6 +10,8 @@ from apps.common.validators import validate_password_strength
 
 
 class UserSerializer(serializers.ModelSerializer):
+    wallet_balance = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -18,6 +20,11 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'wallet_balance', 'created_at', 'updated_at']
+
+    def get_wallet_balance(self, obj):
+        from apps.wallet.services import WalletService
+        wallet = WalletService.get_or_create_wallet(obj)
+        return str(wallet.balance)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -153,6 +160,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class UserDetailSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
+    wallet_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -163,6 +171,11 @@ class UserDetailSerializer(serializers.ModelSerializer):
             'age_verified', 'age_verified_at', 'is_2fa_enabled', 'profile', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'wallet_balance', 'created_at', 'updated_at', 'email_verified', 'is_2fa_enabled']
+
+    def get_wallet_balance(self, obj):
+        from apps.wallet.services import WalletService
+        wallet = WalletService.get_or_create_wallet(obj)
+        return str(wallet.balance)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

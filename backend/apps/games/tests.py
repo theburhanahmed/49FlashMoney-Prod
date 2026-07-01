@@ -12,9 +12,20 @@ from rest_framework.test import APIClient
 
 from apps.games.models import GameRoom, GameRoomPlayer, GameKind, GameState
 from apps.games.engines import snakes_ladders, ludo, carrom, aviator, wingo
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 
 
 User = get_user_model()
+
+
+def _fund_user(user, amount, key_suffix=''):
+    """Test helper: fund a user's wallet via ledger-backed WalletService."""
+    WalletService.credit(
+        user=user, amount=amount,
+        entry_type=LedgerEntry.DEPOSIT,
+        idempotency_key=f'test_fund_{user.id}_{key_suffix}',
+    )
 
 
 @override_settings(
@@ -37,8 +48,8 @@ class GameEnginesTestCase(TestCase):
             username="player",
             email="player@test.com",
             password="PlayerPass123",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.user, Decimal("100.00"), "engines")
         self.room_sl = GameRoom.objects.create(
             game_kind=GameKind.SNAKES_LADDERS,
             status=GameRoom.STATUS_WAITING,
@@ -101,8 +112,8 @@ class GameRoomApiTestCase(TestCase):
             username="player",
             email="player@test.com",
             password="PlayerPass123",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.user, Decimal("100.00"), "roomapi")
         self.client.force_authenticate(user=self.user)
 
     def _create_room(self, game_kind: str) -> GameRoom:
@@ -169,14 +180,14 @@ class AviatorEngineTestCase(TestCase):
             username="aviator_p1",
             email="aviator_p1@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
         )
+        _fund_user(self.user1, Decimal("500.00"), "aviator1")
         self.user2 = User.objects.create_user(
             username="aviator_p2",
             email="aviator_p2@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
         )
+        _fund_user(self.user2, Decimal("500.00"), "aviator2")
         self.room = GameRoom.objects.create(
             game_kind=GameKind.AVIATOR,
             status=GameRoom.STATUS_IN_PROGRESS,
@@ -319,14 +330,14 @@ class WingoEngineTestCase(TestCase):
             username="wingo_p1",
             email="wingo_p1@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
         )
+        _fund_user(self.user1, Decimal("500.00"), "wingo1")
         self.user2 = User.objects.create_user(
             username="wingo_p2",
             email="wingo_p2@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
         )
+        _fund_user(self.user2, Decimal("500.00"), "wingo2")
         self.room = GameRoom.objects.create(
             game_kind=GameKind.WINGO,
             status=GameRoom.STATUS_IN_PROGRESS,
@@ -540,14 +551,14 @@ class LeaveRoomServiceTestCase(TestCase):
             username="leave_p1",
             email="leave_p1@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.user1, Decimal("100.00"), "leave1")
         self.user2 = User.objects.create_user(
             username="leave_p2",
             email="leave_p2@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.user2, Decimal("100.00"), "leave2")
         self.room = GameRoom.objects.create(
             game_kind=GameKind.SNAKES_LADDERS,
             status=GameRoom.STATUS_WAITING,
@@ -581,8 +592,8 @@ class LeaveRoomServiceTestCase(TestCase):
             username="outsider",
             email="outsider@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(other_user, Decimal("100.00"), "outsider")
         with self.assertRaises(ValueError) as ctx:
             leave_room(other_user, str(self.room.id))
         self.assertIn('not in this room', str(ctx.exception))
@@ -623,14 +634,14 @@ class StartGamePermissionTestCase(TestCase):
             username="starter_p1",
             email="starter_p1@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.user1, Decimal("100.00"), "starter1")
         self.outsider = User.objects.create_user(
             username="starter_outsider",
             email="starter_outsider@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("100.00"),
         )
+        _fund_user(self.outsider, Decimal("100.00"), "starter_outsider")
         self.room = GameRoom.objects.create(
             game_kind=GameKind.SNAKES_LADDERS,
             status=GameRoom.STATUS_WAITING,

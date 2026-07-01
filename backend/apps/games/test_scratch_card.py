@@ -10,6 +10,8 @@ from django.contrib.auth import get_user_model
 
 from apps.games.models import GameRoom, GameRoomPlayer, GameKind
 from apps.games.engines import scratch_card
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 
 User = get_user_model()
 
@@ -22,7 +24,11 @@ class ScratchCardEngineTestCase(TestCase):
             username="scratch_player",
             email="scratch@test.com",
             password="Pass123!",
-            wallet_balance=Decimal("500.00"),
+        )
+        WalletService.credit(
+            user=self.user, amount=Decimal("500.00"),
+            entry_type=LedgerEntry.DEPOSIT,
+            idempotency_key='test_scratch_setup',
         )
         self.room = GameRoom.objects.create(
             game_kind=GameKind.SCRATCH_CARD,

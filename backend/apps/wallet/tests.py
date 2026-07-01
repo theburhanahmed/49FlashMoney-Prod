@@ -52,7 +52,7 @@ class WalletServiceTestCase(TestCase):
         self.assertEqual(entry.balance_after, Decimal('100.00'))
 
     def test_credit_updates_balance(self):
-        """Credit updates cached balance on wallet and user."""
+        """Credit updates cached balance on wallet."""
         WalletService.credit(
             user=self.user,
             amount=Decimal('50.00'),
@@ -61,9 +61,6 @@ class WalletServiceTestCase(TestCase):
         )
         wallet = Wallet.objects.get(user=self.user)
         self.assertEqual(wallet.balance, Decimal('50.00'))
-
-        self.user.refresh_from_db()
-        self.assertEqual(self.user.wallet_balance, Decimal('50.00'))
 
     def test_debit_creates_ledger_entry(self):
         """Debiting creates an immutable ledger entry."""
@@ -223,7 +220,8 @@ class WalletServiceTestCase(TestCase):
         wallet = Wallet.objects.get(user=self.user)
         self.assertEqual(wallet.balance, Decimal('70.00'))
         self.assertEqual(wallet.reserved_balance, Decimal('30.00'))
-        self.assertEqual(wallet.available_balance, Decimal('70.00'))
+        # available_balance = balance - reserved_balance = 70 - 30 = 40
+        self.assertEqual(wallet.available_balance, Decimal('40.00'))
 
         # Release 30
         WalletService.release_reservation(

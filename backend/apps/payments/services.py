@@ -1,5 +1,6 @@
 import stripe
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from apps.payments.models import StripeCustomer, PaymentIntent
 from apps.transactions.models import Transaction
@@ -279,9 +280,11 @@ class StripeService:
             raise
 
     @staticmethod
+    @transaction.atomic
     def handle_payment_success(payment_intent_id):
         """
-        Handle successful payment - credit user wallet and create transaction
+        Handle successful payment - credit user wallet and create transaction.
+        Wrapped in @transaction.atomic to ensure all-or-nothing settlement.
         """
         try:
             payment_intent = PaymentIntent.objects.get(

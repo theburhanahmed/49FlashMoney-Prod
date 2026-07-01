@@ -39,13 +39,12 @@ def save_user_profile(sender, instance, **kwargs):
 @receiver(pre_save, sender=User)
 def log_user_changes(sender, instance, **kwargs):
     """
-    Signal to log user changes
+    Signal to log significant user field changes.
+    Note: wallet balance changes are tracked exclusively through LedgerEntry
+    in WalletService. This signal handles non-financial field changes only.
     """
     try:
-        old_instance = sender.objects.get(pk=instance.pk)
-        if old_instance.wallet_balance != instance.wallet_balance:
-            # Wallet balance changed - this will be logged in the transaction
-            pass
+        sender.objects.get(pk=instance.pk)
     except sender.DoesNotExist:
         # New user being created
         pass

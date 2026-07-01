@@ -9,6 +9,7 @@ from django.conf import settings
 import logging
 
 from apps.transactions.models import WithdrawalRequest, Transaction
+from apps.wallet.services import WalletService
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,11 @@ class WithdrawalService:
         """
         Calculate the withdrawable balance for a user.
         This excludes referral bonus amounts which cannot be withdrawn.
+        Uses the Wallet model (ledger-backed) as the single source of truth.
         """
+        wallet = WalletService.get_or_create_wallet(user)
         referral_balance = cls.get_referral_bonus_balance(user)
-        withdrawable = user.wallet_balance - referral_balance
+        withdrawable = wallet.balance - referral_balance
         return max(withdrawable, Decimal('0.00'))
     
     @classmethod
@@ -72,8 +75,9 @@ class WithdrawalService:
         if amount > cls.MAX_WITHDRAWAL_AMOUNT:
             return False, f'Maximum withdrawal amount is ${cls.MAX_WITHDRAWAL_AMOUNT}'
         
-        # Check wallet balance
-        if user.wallet_balance < amount:
+        # Check wallet balance (via ledger-backed Wallet model)
+        wallet = WalletService.get_or_create_wallet(user)
+        if wallet.balance < amount:
             return False, 'Insufficient wallet balance'
         
         # Check withdrawable balance (excluding referral bonuses)
@@ -198,7 +202,7 @@ class WithdrawalService:
             'monthly_limit': str(cls.MONTHLY_WITHDRAWAL_LIMIT),
             'monthly_used': str(monthly_total),
             'monthly_remaining': str(cls.MONTHLY_WITHDRAWAL_LIMIT - monthly_total),
-            'wallet_balance': str(user.wallet_balance),
+            'wallet_balance': str(WalletService.get_or_create_wallet(user).balance),
             'referral_balance': str(referral_balance),
             'withdrawable_balance': str(withdrawable_balance),
         }

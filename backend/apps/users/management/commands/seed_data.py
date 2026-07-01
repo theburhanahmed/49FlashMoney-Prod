@@ -37,6 +37,9 @@ class Command(BaseCommand):
         # Create sample users
         self.stdout.write('Creating sample users...')
         
+        from apps.wallet.services import WalletService
+        from apps.wallet.models import LedgerEntry
+
         # Create admin user if not exists
         admin_user, created = User.objects.get_or_create(
             username='admin',
@@ -46,14 +49,19 @@ class Command(BaseCommand):
                 'is_staff': True,
                 'is_superuser': True,
                 'role': 'admin',
-                'wallet_balance': 1000.00
             }
         )
         if created:
             admin_user.set_password('Admin123!')
             admin_user.save()
+            WalletService.credit(
+                user=admin_user, amount=Decimal('1000.00'),
+                entry_type=LedgerEntry.ADMIN_ADJUSTMENT,
+                description='Seed data: initial balance',
+                idempotency_key=f'seed_init_{admin_user.id}',
+                actor='seed_data',
+            )
         else:
-            # Update existing admin user to ensure proper role and permissions
             admin_user.is_admin = True
             admin_user.is_staff = True
             admin_user.is_superuser = True
@@ -63,11 +71,11 @@ class Command(BaseCommand):
         
         # Create regular users
         users_data = [
-            {'username': 'john_doe', 'email': 'john@example.com', 'wallet_balance': 500.00},
-            {'username': 'jane_smith', 'email': 'jane@example.com', 'wallet_balance': 250.00},
-            {'username': 'bob_wilson', 'email': 'bob@example.com', 'wallet_balance': 750.00},
-            {'username': 'alice_brown', 'email': 'alice@example.com', 'wallet_balance': 100.00},
-            {'username': 'charlie_davis', 'email': 'charlie@example.com', 'wallet_balance': 300.00},
+            {'username': 'john_doe', 'email': 'john@example.com', 'balance': Decimal('500.00')},
+            {'username': 'jane_smith', 'email': 'jane@example.com', 'balance': Decimal('250.00')},
+            {'username': 'bob_wilson', 'email': 'bob@example.com', 'balance': Decimal('750.00')},
+            {'username': 'alice_brown', 'email': 'alice@example.com', 'balance': Decimal('100.00')},
+            {'username': 'charlie_davis', 'email': 'charlie@example.com', 'balance': Decimal('300.00')},
         ]
         
         users = [admin_user]
@@ -76,13 +84,19 @@ class Command(BaseCommand):
                 username=user_data['username'],
                 defaults={
                     'email': user_data['email'],
-                    'wallet_balance': user_data['wallet_balance'],
-                    'is_active': True
+                    'is_active': True,
                 }
             )
             if created:
                 user.set_password('Password123!')
                 user.save()
+                WalletService.credit(
+                    user=user, amount=user_data['balance'],
+                    entry_type=LedgerEntry.ADMIN_ADJUSTMENT,
+                    description='Seed data: initial balance',
+                    idempotency_key=f'seed_init_{user.id}',
+                    actor='seed_data',
+                )
             users.append(user)
         
         # Create user profiles
@@ -215,8 +229,22 @@ class Command(BaseCommand):
                     user_profile.total_spent += float(lottery.ticket_price)
                     user_profile.save()
                     
-                    # Deduct balance from user
-                    user.deduct_balance(lottery.ticket_price)
+                    # Deduct balance from user via WalletService
+                    from apps.wallet.services import WalletService
+                    from apps.wallet.models import LedgerEntry
+                    try:
+                        WalletService.debit(
+                            user=user,
+                            amount=lottery.ticket_price,
+                            entry_type=LedgerEntry.TICKET_PURCHASE,
+                            description=f'Ticket purchase for {lottery.name}',
+                            reference_type='ticket',
+                            reference_id=str(ticket.id),
+                            idempotency_key=f'seed_ticket_{ticket.id}',
+                            actor='seed_data',
+                        )
+                    except Exception:
+                        pass  # Ignore in seed data
         
         # Create some winners for drawn lotteries
         drawn_lotteries = Lottery.objects.filter(status='DRAWN')
@@ -274,12 +302,13 @@ class Command(BaseCommand):
         # Create some withdrawal requests
         self.stdout.write('Creating withdrawal requests...')
         for user in users[1:]:  # Exclude admin
-            if user.wallet_balance > 0:
+            wallet = WalletService.get_or_create_wallet(user)
+            if wallet.balance > 0:
                 payment_methods = user.payment_methods.all()
                 if payment_methods.exists():
                     WithdrawalRequest.objects.create(
                         user=user,
-                        amount=min(user.wallet_balance, 100.00),
+                        amount=min(wallet.balance, Decimal('100.00')),
                         payment_method=payment_methods.first(),
                         status=random.choice(['REQUESTED', 'APPROVED', 'COMPLETED', 'REJECTED']),
                         remarks='Sample withdrawal request'

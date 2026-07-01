@@ -415,8 +415,10 @@ class UserViewSet(viewsets.ModelViewSet):
             status='REQUESTED'
         ).count()
         
+        from apps.wallet.services import WalletService
+        wallet = WalletService.get_or_create_wallet(user)
         response_data = {
-            'wallet_balance': str(user.wallet_balance),
+            'wallet_balance': str(wallet.balance),
             'stats': stats,
             'recent_transactions': transactions_data,
             'recent_tickets': tickets_data,
@@ -441,10 +443,12 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def wallet(self, request):
-        """Get user wallet balance"""
+        """Get user wallet balance from the ledger-backed Wallet model."""
+        from apps.wallet.services import WalletService
         user = request.user
+        wallet = WalletService.get_or_create_wallet(user)
         return Response({
-            'wallet_balance': str(user.wallet_balance),
+            'wallet_balance': str(wallet.balance),
             'user_id': str(user.id)
         })
 

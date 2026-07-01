@@ -4,6 +4,8 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from apps.lotteries.models import Lottery, Ticket, Winner
 from apps.transactions.models import Transaction
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 from decimal import Decimal
 import uuid
 
@@ -46,7 +48,11 @@ class TicketPurchaseTestCase(TestCase):
             username='testuser',
             email='test@example.com',
             password='TestPassword123',
-            wallet_balance=Decimal('100.00')
+        )
+        WalletService.credit(
+            user=self.user, amount=Decimal('100.00'),
+            entry_type=LedgerEntry.DEPOSIT,
+            idempotency_key='test_lottery_setup',
         )
         self.lottery = Lottery.objects.create(
             name='Test Lottery',
@@ -70,9 +76,9 @@ class TicketPurchaseTestCase(TestCase):
         ticket = Ticket.objects.filter(user=self.user, lottery=self.lottery).first()
         self.assertIsNotNone(ticket)
 
-        # Check wallet balance was deducted
-        self.user.refresh_from_db()
-        self.assertEqual(self.user.wallet_balance, Decimal('90.00'))
+        # Check wallet balance was deducted (via ledger-backed Wallet)
+        wallet = WalletService.get_or_create_wallet(self.user)
+        self.assertEqual(wallet.balance, Decimal('90.00'))
 
         # Check transaction was created
         transaction = Transaction.objects.filter(
@@ -84,8 +90,12 @@ class TicketPurchaseTestCase(TestCase):
 
     def test_purchase_ticket_insufficient_balance(self):
         """Test ticket purchase with insufficient balance"""
-        self.user.wallet_balance = Decimal('5.00')
-        self.user.save()
+        # Debit most of the balance so only 5.00 remains
+        WalletService.debit(
+            user=self.user, amount=Decimal('95.00'),
+            entry_type=LedgerEntry.ADJUSTMENT,
+            idempotency_key='test_lottery_drain',
+        )
 
         response = self.client.post(f'/api/lotteries/{self.lottery.id}/buy_ticket/')
 

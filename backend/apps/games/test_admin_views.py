@@ -11,8 +11,19 @@ from rest_framework.test import APIClient
 
 from apps.games.models import GameRoom, GameRoomPlayer, GameState, GameKind
 from apps.users.models import AuditLog
+from apps.wallet.services import WalletService
+from apps.wallet.models import LedgerEntry
 
 User = get_user_model()
+
+
+def _fund_user(user, amount, key_suffix=''):
+    """Fund user wallet via WalletService."""
+    WalletService.credit(
+        user=user, amount=amount,
+        entry_type=LedgerEntry.DEPOSIT,
+        idempotency_key=f'test_admin_{user.id}_{key_suffix}',
+    )
 
 
 @override_settings(
@@ -175,8 +186,8 @@ class GameRoundHistoryViewTestCase(TestCase):
             username='player',
             email='player@test.com',
             password='PlayerPass123!',
-            wallet_balance=Decimal('100.00'),
         )
+        _fund_user(self.player, Decimal('100.00'), 'round_hist')
         self.client.force_authenticate(user=self.admin)
         # Create some rooms
         self.room = GameRoom.objects.create(
@@ -244,8 +255,8 @@ class GameMaintenanceViewTestCase(TestCase):
             username='maint_player',
             email='maint_player@test.com',
             password='Pass123!',
-            wallet_balance=Decimal('100.00'),
         )
+        _fund_user(self.player, Decimal('100.00'), 'maint')
         self.client.force_authenticate(user=self.admin)
 
     def test_disable_game(self):
