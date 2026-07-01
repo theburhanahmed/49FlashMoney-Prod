@@ -38,6 +38,7 @@ urlpatterns = [
     path('api/vip/', include('apps.vip.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
     path('api/common/', include('apps.common.urls')),
+    path('api/providers/', include('apps.providers.urls')),
 
     # API Documentation
     path('api/docs/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

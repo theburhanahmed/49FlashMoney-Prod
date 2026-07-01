@@ -55,6 +55,7 @@ LOCAL_APPS = [
     'apps.lotteries',
     'apps.games',
     'apps.slots',
+    'apps.providers',
     'apps.notifications',
     'apps.referrals',
     'apps.promotions',
@@ -330,3 +331,10 @@ WITHDRAWAL_MIN_AMOUNT = 10.00
 WITHDRAWAL_MAX_AMOUNT = 10000.00
 WITHDRAWAL_DAILY_LIMIT = 1000.00
 WITHDRAWAL_MONTHLY_LIMIT = 5000.00
+
+# Provider adapter settings
+# Additional providers can be registered by adding their slugs here.
+# Credentials are stored in ProviderConfig.credentials (DB) and should be
+# populated via the admin API, not hardcoded here.
+PROVIDER_DEFAULT_CURRENCY = env('PROVIDER_DEFAULT_CURRENCY', default='INR')
+PROVIDER_SESSION_TTL_SECONDS = env.int('PROVIDER_SESSION_TTL_SECONDS', default=3600)
