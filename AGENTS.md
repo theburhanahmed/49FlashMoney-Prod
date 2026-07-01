@@ -168,23 +168,23 @@ python manage.py test apps.notifications           # Notification services
 - `POST /api/vip/admin/tiers/set-tier/` – Manually set user tier (admin)
 
 ## Promotions API Endpoints
-- `GET /api/promotions/promotions/` – List available promotions
-- `POST /api/promotions/promotions/<id>/claim/` – Claim a promotion
-- `GET /api/promotions/promotions/my-claims/` – User's claim history
-- `POST /api/promotions/promotions/` – Create promotion (admin)
+- `GET /api/promotions/` – List available promotions
+- `POST /api/promotions/<id>/claim/` – Claim a promotion
+- `GET /api/promotions/my-claims/` – User's claim history
+- `POST /api/promotions/` – Create promotion (admin)
 
 ## Analytics API Endpoints (admin only)
-- `GET /api/analytics/admin/analytics/dashboard/` – Overview metrics
-- `GET /api/analytics/admin/analytics/financial/` – Financial metrics
-- `GET /api/analytics/admin/analytics/games/` – Game KPIs (GGR, NGR, RTP)
-- `GET /api/analytics/admin/analytics/charts/` – Time-series chart data
-- `GET /api/analytics/admin/analytics/reports_financial/` – Download financial CSV
+- `GET /api/analytics/admin/dashboard/` – Overview metrics
+- `GET /api/analytics/admin/financial/` – Financial metrics
+- `GET /api/analytics/admin/games/` – Game KPIs (GGR, NGR, RTP)
+- `GET /api/analytics/admin/charts/` – Time-series chart data
+- `GET /api/analytics/admin/reports_financial/` – Download financial CSV
 
 ## Health & Readiness Endpoints (no auth required)
-- `GET /api/health/` – Basic liveness probe
-- `GET /api/health/db/` – Database connectivity check
-- `GET /api/health/cache/` – Cache (Redis) connectivity check
-- `GET /api/health/ready/` – Combined readiness probe (DB + cache + Celery + ledger spot-check)
+- `GET /api/common/` – Basic liveness probe
+- `GET /api/common/db/` – Database connectivity check
+- `GET /api/common/cache/` – Cache (Redis) connectivity check
+- `GET /api/common/ready/` – Combined readiness probe (DB + cache + Celery + ledger spot-check)
 
 ## Production Hardening Rules
 

@@ -7,7 +7,7 @@ from .views import PromotionViewSet
 app_name = 'promotions'
 
 router = DefaultRouter()
-router.register(r'promotions', PromotionViewSet, basename='promotion')
+router.register(r'', PromotionViewSet, basename='promotion')
 
 urlpatterns = [
     path('', include(router.urls)),

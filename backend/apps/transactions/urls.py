@@ -6,10 +6,10 @@ from apps.transactions.views import (
 )
 
 router = DefaultRouter()
-router.register(r'transactions', TransactionViewSet, basename='transaction')
+router.register(r'', TransactionViewSet, basename='transaction')
 router.register(r'payment-methods', PaymentMethodViewSet, basename='payment-method')
 router.register(r'withdrawals', WithdrawalRequestViewSet, basename='withdrawal')
-router.register(r'admin/transactions', AdminTransactionViewSet, basename='admin-transaction')
+router.register(r'admin', AdminTransactionViewSet, basename='admin-transaction')
 
 urlpatterns = [
     path('', include(router.urls)),

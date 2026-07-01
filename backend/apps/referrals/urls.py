@@ -13,7 +13,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'programs', ReferralProgramViewSet, basename='referral-program')
 router.register(r'links', ReferralLinkViewSet, basename='referral-link')
-router.register(r'referrals', ReferralViewSet, basename='referral')
+router.register(r'', ReferralViewSet, basename='referral')
 router.register(r'bonuses', ReferralBonusViewSet, basename='referral-bonus')
 router.register(r'withdrawals', ReferralWithdrawalViewSet, basename='referral-withdrawal')
 

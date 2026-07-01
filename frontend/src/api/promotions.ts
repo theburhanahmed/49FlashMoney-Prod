@@ -27,11 +27,11 @@ export interface PromotionClaim {
 
 export const promotionsApi = {
   list: () =>
-    apiClient.get<Promotion[]>('/promotions/promotions/'),
+    apiClient.get<Promotion[]>('/promotions/'),
 
   claim: (promotionId: string, depositAmount?: number) =>
-    apiClient.post<PromotionClaim>(`/promotions/promotions/${promotionId}/claim/`, { deposit_amount: depositAmount }),
+    apiClient.post<PromotionClaim>(`/promotions/${promotionId}/claim/`, { deposit_amount: depositAmount }),
 
   myClaims: () =>
-    apiClient.get<PromotionClaim[]>('/promotions/promotions/my-claims/'),
+    apiClient.get<PromotionClaim[]>('/promotions/my-claims/'),
 };

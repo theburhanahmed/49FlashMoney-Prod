@@ -67,14 +67,14 @@ export interface ChartMetrics {
 
 export const analyticsApi = {
   getDashboard: (days?: number) =>
-    apiClient.get<DashboardMetrics>('/analytics/admin/analytics/dashboard/', { params: { days } }),
+    apiClient.get<DashboardMetrics>('/analytics/admin/dashboard/', { params: { days } }),
 
   getFinancial: (startDate?: string, endDate?: string) =>
-    apiClient.get<FinancialMetrics>('/analytics/admin/analytics/financial/', { params: { start_date: startDate, end_date: endDate } }),
+    apiClient.get<FinancialMetrics>('/analytics/admin/financial/', { params: { start_date: startDate, end_date: endDate } }),
 
   getGameMetrics: (startDate?: string, endDate?: string) =>
-    apiClient.get<GameMetrics>('/analytics/admin/analytics/games/', { params: { start_date: startDate, end_date: endDate } }),
+    apiClient.get<GameMetrics>('/analytics/admin/games/', { params: { start_date: startDate, end_date: endDate } }),
 
   getCharts: (type: string, period?: string, days?: number) =>
-    apiClient.get<ChartMetrics>('/analytics/admin/analytics/charts/', { params: { type, period, days } }),
+    apiClient.get<ChartMetrics>('/analytics/admin/charts/', { params: { type, period, days } }),
 };

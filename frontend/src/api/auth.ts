@@ -12,7 +12,7 @@ export const authApi = {
     apiClient.post<{ message: string }>('/users/register/', data),
 
   getProfile: () =>
-    apiClient.get<User>('/users/users/profile/'),
+    apiClient.get<User>('/users/profile/'),
 
   changePassword: (data: { old_password: string; new_password: string }) =>
     apiClient.post<{ message: string }>('/users/change-password/', data),

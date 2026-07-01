@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from apps.lotteries.views import LotteryViewSet, TicketViewSet
 
 router = DefaultRouter()
-router.register(r'lotteries', LotteryViewSet, basename='lottery')
+router.register(r'', LotteryViewSet, basename='lottery')
 router.register(r'tickets', TicketViewSet, basename='ticket')
 
 urlpatterns = [
