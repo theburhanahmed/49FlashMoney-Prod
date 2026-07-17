@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { gamesApi } from '../api/games';
 import type { GameKind } from '../types';
 import { AxiosError } from 'axios';
+import CasinoLayout from '../components/CasinoLayout';
+import GlowButton from '../components/GlowButton';
 
 interface RoomListItem {
   id: string;
@@ -33,14 +35,14 @@ interface RoomDetail {
   ended_at: string | null;
 }
 
-const GAME_KINDS: { value: GameKind; label: string }[] = [
-  { value: 'SNAKES_LADDERS', label: 'Snakes & Ladders' },
-  { value: 'LUDO', label: 'Ludo' },
-  { value: 'CARROM', label: 'Carrom' },
-  { value: 'AVIATOR', label: 'Aviator' },
-  { value: 'WINGO', label: 'Wingo' },
-  { value: 'MINES', label: 'Mines' },
-  { value: 'SCRATCH_CARD', label: 'Scratch Card' },
+const GAME_KINDS: { value: GameKind; label: string; icon: string; description: string; path?: string }[] = [
+  { value: 'SNAKES_LADDERS', label: 'Snakes & Ladders', icon: '🐍', description: 'Classic board game with a twist' },
+  { value: 'LUDO', label: 'Ludo', icon: '🎲', description: 'Race to the finish in real-money rooms' },
+  { value: 'CARROM', label: 'Carrom', icon: '🎯', description: 'Flick and pocket for big wins' },
+  { value: 'AVIATOR', label: 'Aviator', icon: '✈️', description: 'Cash out before the plane flies away' },
+  { value: 'WINGO', label: 'Wingo', icon: '🎡', description: 'Predict color or number to win' },
+  { value: 'MINES', label: 'Mines', icon: '💣', description: 'Reveal gems, avoid mines', path: '/games/mines' },
+  { value: 'SCRATCH_CARD', label: 'Scratch Card', icon: '🎟️', description: 'Instant win scratch cards', path: '/games/scratch-card' },
 ];
 
 function getErrorMessage(err: unknown): string {
@@ -54,20 +56,31 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Unknown error';
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    WAITING: 'bg-casino-gold/20 text-casino-gold border-casino-gold/30',
+    IN_PROGRESS: 'bg-casino-green/20 text-casino-green border-casino-green/30',
+    COMPLETED: 'bg-casino-muted/20 text-casino-muted border-casino-muted/30',
+  };
+  return (
+    <span className={`text-xs font-bold font-display px-2 py-0.5 rounded-full border uppercase tracking-wider ${colors[status] ?? colors.COMPLETED}`}>
+      {status.replace('_', ' ')}
+    </span>
+  );
+}
+
 function GamesPage() {
   const [rooms, setRooms] = useState<RoomListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
   const [showCreate, setShowCreate] = useState(false);
   const [newGameKind, setNewGameKind] = useState<GameKind>('SNAKES_LADDERS');
   const [newEntryFee, setNewEntryFee] = useState('10');
   const [creating, setCreating] = useState(false);
-
-  // Room detail view
   const [activeRoom, setActiveRoom] = useState<RoomDetail | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadRooms();
@@ -158,176 +171,286 @@ function GamesPage() {
     }
   };
 
-  // If viewing a room detail
+  // Room detail view
   if (activeRoom) {
-    const kindLabel = GAME_KINDS.find((g) => g.value === activeRoom.game_kind)?.label ?? activeRoom.game_kind;
+    const kindData = GAME_KINDS.find((g) => g.value === activeRoom.game_kind);
+    const kindLabel = kindData?.label ?? activeRoom.game_kind;
+    const kindIcon = kindData?.icon ?? '🎮';
     return (
-      <div style={{ maxWidth: 700, margin: '40px auto', padding: 24 }}>
-        <button onClick={() => { setActiveRoom(null); setError(null); setSuccess(null); }} style={{ marginBottom: 16, padding: '6px 12px' }}>
-          &larr; Back to Rooms
-        </button>
+      <CasinoLayout>
+        <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
+          <button
+            onClick={() => { setActiveRoom(null); setError(null); setSuccess(null); }}
+            className="flex items-center gap-2 text-casino-muted hover:text-casino-gold transition-colors text-sm font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Back to Rooms
+          </button>
 
-        {error && <div style={{ color: 'red', marginBottom: 12, padding: 8, background: '#fee' }}>{error}</div>}
-        {success && <div style={{ color: 'green', marginBottom: 12, padding: 8, background: '#efe' }}>{success}</div>}
+          {error && (
+            <div className="bg-casino-red/10 border border-casino-red/30 rounded-xl px-4 py-3 text-casino-red text-sm">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="bg-casino-green/10 border border-casino-green/30 rounded-xl px-4 py-3 text-casino-green text-sm">
+              {success}
+            </div>
+          )}
 
-        <h1>{kindLabel}</h1>
-        <p><strong>Status:</strong> {activeRoom.status} | <strong>Entry Fee:</strong> {activeRoom.entry_fee} | <strong>Created by:</strong> {activeRoom.created_by_username}</p>
-
-        <h3>Players ({activeRoom.players.length}/{activeRoom.max_players})</h3>
-        {activeRoom.players.length === 0 ? (
-          <p>No players yet</p>
-        ) : (
-          <ul>
-            {activeRoom.players.map((p) => (
-              <li key={p.id}>
-                <strong>{p.username}</strong> - {p.result}
-                {p.payout !== '0.00' && ` (payout: ${p.payout})`}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {activeRoom.status === 'WAITING' && (
-          <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-            <button
-              onClick={handleStart}
-              disabled={actionLoading || activeRoom.players.length < activeRoom.min_players}
-              style={{ padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-            >
-              {actionLoading ? 'Starting...' : `Start Game (need ${activeRoom.min_players}+ players)`}
-            </button>
-            <button
-              onClick={handleLeave}
-              disabled={actionLoading}
-              style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-            >
-              Leave Room
-            </button>
+          {/* Room header */}
+          <div className="casino-card p-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="text-5xl">{kindIcon}</div>
+              <div>
+                <h1 className="font-display text-3xl font-bold text-white">{kindLabel}</h1>
+                <div className="flex items-center gap-3 mt-1">
+                  <StatusBadge status={activeRoom.status} />
+                  <span className="text-casino-muted text-sm">by {activeRoom.created_by_username}</span>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-casino-border">
+              <div className="text-center">
+                <p className="text-casino-muted text-xs uppercase tracking-wider">Entry Fee</p>
+                <p className="font-display text-xl font-bold text-casino-gold">{activeRoom.entry_fee}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-casino-muted text-xs uppercase tracking-wider">Players</p>
+                <p className="font-display text-xl font-bold text-white">
+                  {activeRoom.players.length}/{activeRoom.max_players}
+                </p>
+              </div>
+              <div className="text-center">
+                <p className="text-casino-muted text-xs uppercase tracking-wider">Min Required</p>
+                <p className="font-display text-xl font-bold text-white">{activeRoom.min_players}</p>
+              </div>
+            </div>
           </div>
-        )}
 
-        {activeRoom.status === 'IN_PROGRESS' && (
-          <div style={{ marginTop: 16, padding: 16, background: '#fff3cd', borderRadius: 8 }}>
-            <strong>Game in progress!</strong>
-            {activeRoom.state != null && <pre style={{ fontSize: 12, overflow: 'auto' }}>{JSON.stringify(activeRoom.state, null, 2)}</pre>}
+          {/* Players list */}
+          <div className="casino-card p-6">
+            <h3 className="section-title mb-4">Players</h3>
+            {activeRoom.players.length === 0 ? (
+              <p className="text-casino-muted text-sm">No players yet. Be the first to join!</p>
+            ) : (
+              <div className="space-y-2">
+                {activeRoom.players.map((p, i) => (
+                  <div key={p.id} className="flex items-center justify-between p-3 bg-casino-bg rounded-xl border border-casino-border">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-neon-gradient flex items-center justify-center text-white text-sm font-bold">
+                        {i + 1}
+                      </div>
+                      <span className="font-medium text-white">{p.username}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {p.result && <span className="text-casino-muted text-sm">{p.result}</span>}
+                      {p.payout !== '0.00' && (
+                        <span className="text-casino-gold font-bold text-sm">+{p.payout}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
 
-        {activeRoom.status === 'COMPLETED' && (
-          <div style={{ marginTop: 16, padding: 16, background: '#d4edda', borderRadius: 8 }}>
-            <strong>Game completed!</strong>
-            <p>Results:</p>
-            <ul>
-              {activeRoom.players.map((p) => (
-                <li key={p.id}>{p.username}: {p.result} {p.payout !== '0.00' && `- Won ${p.payout}`}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
+          {/* Actions */}
+          {activeRoom.status === 'WAITING' && (
+            <div className="flex gap-3">
+              <GlowButton
+                variant="green"
+                onClick={handleStart}
+                disabled={actionLoading || activeRoom.players.length < activeRoom.min_players}
+              >
+                {actionLoading ? 'Starting...' : `Start Game (need ${activeRoom.min_players}+)`}
+              </GlowButton>
+              <GlowButton variant="danger" onClick={handleLeave} disabled={actionLoading}>
+                Leave Room
+              </GlowButton>
+            </div>
+          )}
+
+          {activeRoom.status === 'IN_PROGRESS' && (
+            <div className="casino-card p-6 border-casino-green/30 bg-casino-green/5">
+              <p className="text-casino-green font-display font-bold text-lg mb-3">Game In Progress!</p>
+              {activeRoom.state != null && (
+                <pre className="text-casino-muted text-xs overflow-auto bg-casino-bg rounded-lg p-3 max-h-60">
+                  {JSON.stringify(activeRoom.state, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {activeRoom.status === 'COMPLETED' && (
+            <div className="casino-card p-6 border-casino-gold/30 bg-casino-gold/5">
+              <p className="text-casino-gold font-display font-bold text-lg mb-3">Game Completed!</p>
+              <div className="space-y-2">
+                {activeRoom.players.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between">
+                    <span className="text-white">{p.username}</span>
+                    <span className={p.payout !== '0.00' ? 'text-casino-green font-bold' : 'text-casino-muted'}>
+                      {p.result} {p.payout !== '0.00' && `• Won ${p.payout}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </CasinoLayout>
     );
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: '40px auto', padding: 24 }}>
-      <nav style={{ marginBottom: 20, display: 'flex', gap: 16 }}>
-        <Link to="/dashboard">Dashboard</Link>
-        <Link to="/wallet">Wallet</Link>
-        <Link to="/games">Games</Link>
-        <Link to="/games/mines">Mines</Link>
-        <Link to="/slots">Slots</Link>
-        <Link to="/games/scratch-card">Scratch Card</Link>
-      </nav>
-
-      <h1>Games</h1>
-      {error && <div style={{ color: 'red', marginBottom: 12, padding: 8, background: '#fee' }}>{error}</div>}
-      {success && <div style={{ color: 'green', marginBottom: 12, padding: 8, background: '#efe' }}>{success}</div>}
-
-      <div style={{ marginBottom: 20 }}>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          style={{ padding: '8px 16px', fontWeight: 'bold' }}
-        >
-          {showCreate ? 'Cancel' : 'Create Room'}
-        </button>
-      </div>
-
-      {showCreate && (
-        <form onSubmit={handleCreate} style={{ border: '1px solid #ddd', padding: 16, borderRadius: 8, marginBottom: 20 }}>
-          <h3 style={{ marginTop: 0 }}>Create a Game Room</h3>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Game Type</label>
-            <select
-              value={newGameKind}
-              onChange={(e) => setNewGameKind(e.target.value as GameKind)}
-              style={{ padding: '6px 10px', width: '100%' }}
-            >
-              {GAME_KINDS.map((gk) => (
-                <option key={gk.value} value={gk.value}>{gk.label}</option>
-              ))}
-            </select>
+    <CasinoLayout>
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-8">
+        {/* Page header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-3xl font-bold text-white">Games</h1>
+            <p className="text-casino-muted text-sm mt-1">Choose a game or join an existing room</p>
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Entry Fee</label>
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={newEntryFee}
-              onChange={(e) => setNewEntryFee(e.target.value)}
-              style={{ padding: '6px 10px', width: '100%' }}
-              required
-            />
-          </div>
-          <button type="submit" disabled={creating} style={{ padding: '8px 16px' }}>
-            {creating ? 'Creating...' : 'Create'}
-          </button>
-        </form>
-      )}
-
-      <h2>Available Rooms</h2>
-      {isLoading ? (
-        <p>Loading...</p>
-      ) : rooms.length === 0 ? (
-        <p>No rooms available. Create one!</p>
-      ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {rooms.map((room) => (
-            <div
-              key={room.id}
-              style={{ border: '1px solid #ddd', padding: 16, borderRadius: 8 }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <strong>{GAME_KINDS.find((g) => g.value === room.game_kind)?.label ?? room.game_kind}</strong>
-                  <span style={{ marginLeft: 12, color: '#666' }}>
-                    Entry: {room.entry_fee}
-                  </span>
-                  <span style={{ marginLeft: 12, color: '#999' }}>
-                    {room.player_count}/{room.max_players} players
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    onClick={() => handleViewRoom(room.id)}
-                    style={{ padding: '6px 12px' }}
-                  >
-                    View
-                  </button>
-                  <button
-                    onClick={() => handleJoin(room.id)}
-                    disabled={actionLoading}
-                    style={{ padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4 }}
-                  >
-                    Join
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+          <GlowButton variant="gold" size="sm" onClick={() => setShowCreate(!showCreate)}>
+            {showCreate ? 'Cancel' : '+ Create Room'}
+          </GlowButton>
         </div>
-      )}
-    </div>
+
+        {error && (
+          <div className="bg-casino-red/10 border border-casino-red/30 rounded-xl px-4 py-3 text-casino-red text-sm">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="bg-casino-green/10 border border-casino-green/30 rounded-xl px-4 py-3 text-casino-green text-sm">
+            {success}
+          </div>
+        )}
+
+        {/* Create Room Form */}
+        {showCreate && (
+          <div className="casino-card p-6">
+            <h2 className="section-title mb-5">Create New Room</h2>
+            <form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <label className="block text-casino-muted text-xs uppercase tracking-wider mb-2">Game Type</label>
+                <select
+                  value={newGameKind}
+                  onChange={(e) => setNewGameKind(e.target.value as GameKind)}
+                  className="casino-input"
+                >
+                  {GAME_KINDS.map((g) => (
+                    <option key={g.value} value={g.value}>{g.icon} {g.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-36">
+                <label className="block text-casino-muted text-xs uppercase tracking-wider mb-2">Entry Fee</label>
+                <input
+                  type="number"
+                  value={newEntryFee}
+                  onChange={(e) => setNewEntryFee(e.target.value)}
+                  min="1"
+                  step="1"
+                  className="casino-input"
+                />
+              </div>
+              <div className="flex items-end">
+                <GlowButton type="submit" variant="neon" disabled={creating}>
+                  {creating ? 'Creating...' : 'Create'}
+                </GlowButton>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Game Categories */}
+        <div>
+          <h2 className="section-title mb-4">All Games</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {GAME_KINDS.map((game) => (
+              <button
+                key={game.value}
+                onClick={() => game.path ? navigate(game.path) : undefined}
+                className={`casino-card p-4 text-left transition-all duration-200 hover:border-casino-neon hover:shadow-neon hover:scale-[1.02] active:scale-[0.98] group ${!game.path ? 'opacity-70' : ''}`}
+              >
+                <div className="text-3xl mb-2 group-hover:scale-110 transition-transform">{game.icon}</div>
+                <h3 className="font-display font-bold text-white group-hover:text-casino-gold transition-colors text-sm">{game.label}</h3>
+                <p className="text-casino-muted text-xs mt-1 leading-relaxed">{game.description}</p>
+                {!game.path && (
+                  <span className="text-xs text-casino-neon mt-2 block">Use room list ↓</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Live Rooms */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="section-title">Open Rooms</h2>
+            <button
+              onClick={loadRooms}
+              className="text-casino-muted hover:text-casino-gold text-sm transition-colors flex items-center gap-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+
+          {isLoading ? (
+            <div className="casino-card p-8 text-center">
+              <div className="w-8 h-8 border-2 border-casino-neon border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-casino-muted text-sm">Loading rooms...</p>
+            </div>
+          ) : rooms.length === 0 ? (
+            <div className="casino-card p-8 text-center">
+              <div className="text-4xl mb-3">🎮</div>
+              <p className="text-casino-muted text-sm">No open rooms right now.</p>
+              <p className="text-casino-muted text-xs mt-1">Create one to get started!</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {rooms.map((room) => {
+                const gameData = GAME_KINDS.find((g) => g.value === room.game_kind);
+                return (
+                  <div key={room.id} className="casino-card p-4 flex items-center justify-between hover:border-casino-gold/50 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className="text-3xl">{gameData?.icon ?? '🎮'}</div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-display font-bold text-white">{gameData?.label ?? room.game_kind}</h3>
+                          <StatusBadge status={room.status} />
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-casino-muted text-xs">
+                          <span>by {room.created_by_username}</span>
+                          <span>•</span>
+                          <span className="text-casino-gold font-bold">Entry: {room.entry_fee}</span>
+                          <span>•</span>
+                          <span>{room.player_count}/{room.max_players} players</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <GlowButton variant="ghost" size="sm" onClick={() => handleViewRoom(room.id)}>
+                        View
+                      </GlowButton>
+                      <GlowButton variant="gold" size="sm" onClick={() => handleJoin(room.id)} disabled={actionLoading}>
+                        Join
+                      </GlowButton>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </CasinoLayout>
   );
 }
 

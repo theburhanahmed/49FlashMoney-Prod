@@ -86,20 +86,16 @@ class User(AbstractUser):
         return f"{self.username} ({self.email})"
 
     def add_balance(self, amount):
-        """Add funds to user's wallet"""
-        if amount > 0:
-            self.wallet_balance += amount
-            self.save()
-            return True
-        return False
+        """DEPRECATED: Use WalletService.credit() instead. This bypasses the ledger."""
+        raise NotImplementedError(
+            "User.add_balance() is removed. Use WalletService.credit() for all balance changes."
+        )
 
     def deduct_balance(self, amount):
-        """Deduct funds from user's wallet"""
-        if 0 < amount <= self.wallet_balance:
-            self.wallet_balance -= amount
-            self.save()
-            return True
-        return False
+        """DEPRECATED: Use WalletService.debit() instead. This bypasses the ledger."""
+        raise NotImplementedError(
+            "User.deduct_balance() is removed. Use WalletService.debit() for all balance changes."
+        )
 
     def generate_verification_token(self):
         """Generate email verification token"""

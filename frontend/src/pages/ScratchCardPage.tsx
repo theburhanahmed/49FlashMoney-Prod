@@ -1,5 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import type { ScratchCardState } from '../types';
+import CasinoLayout from '../components/CasinoLayout';
+import GlowButton from '../components/GlowButton';
 
 const ScratchCardPage: React.FC = () => {
   const [gameState, setGameState] = useState<ScratchCardState | null>(null);
@@ -58,30 +60,67 @@ const ScratchCardPage: React.FC = () => {
     setGameState((prev) => prev ? { ...prev, phase: 'finished' } : prev);
   }, [gameState]);
 
-  return (
-    <div style={{ padding: '24px', maxWidth: '600px', margin: '0 auto' }}>
-      <h1>Scratch Card</h1>
+  function getCellStyle(cell: { value: string | null; revealed: boolean }) {
+    if (!cell.revealed) return 'border-casino-border bg-card-gradient hover:border-casino-gold hover:shadow-gold cursor-pointer';
+    if (cell.value === 'bust') return 'border-casino-red/50 bg-casino-red/10 cursor-default';
+    if (cell.value === 'blank') return 'border-casino-border bg-casino-bg cursor-default';
+    return 'border-casino-gold/50 bg-casino-gold/10 cursor-default';
+  }
 
-      {!gameState || gameState.phase === 'finished' ? (
-        <div>
-          {gameState?.phase === 'finished' && (
-            <div style={{
-              padding: '16px',
-              background: parseFloat(gameState.total_prize) > 0 ? '#d4edda' : '#f8d7da',
-              borderRadius: '8px',
-              marginBottom: '16px',
-              textAlign: 'center',
-            }}>
-              <strong>
-                {parseFloat(gameState.total_prize) > 0
-                  ? `You won ${gameState.total_prize}!`
-                  : 'Better luck next time!'}
-              </strong>
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <label>
-              Bet:
+  function getCellContent(cell: { value: string | null; revealed: boolean }) {
+    if (!cell.revealed) return <span className="text-casino-muted text-2xl font-bold">?</span>;
+    if (cell.value === 'bust') return <span className="text-2xl">💥</span>;
+    if (cell.value === 'blank') return <span className="text-casino-muted text-lg font-bold">—</span>;
+    return <span className="font-display font-bold text-casino-gold text-xl">{cell.value}</span>;
+  }
+
+  const wonAmount = gameState ? parseFloat(gameState.total_prize) : 0;
+  const isBust = gameState?.phase === 'finished' && wonAmount === 0 && gameState.revealed_indices.length > 0;
+
+  return (
+    <CasinoLayout>
+      <div className="max-w-lg mx-auto px-4 py-6 space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <div className="text-4xl">🎟️</div>
+          <div>
+            <h1 className="font-display text-3xl font-bold text-white">Scratch Card</h1>
+            <p className="text-casino-muted text-sm">Scratch and reveal instant prizes</p>
+          </div>
+        </div>
+
+        {/* Result banner */}
+        {gameState?.phase === 'finished' && (
+          <div className={`casino-card p-6 text-center ${wonAmount > 0 ? 'border-casino-gold/40 bg-casino-gold/5' : 'border-casino-red/30 bg-casino-red/5'}`}>
+            <div className="text-4xl mb-2">{wonAmount > 0 ? '🏆' : isBust ? '💥' : '😔'}</div>
+            <p className={`font-display text-2xl font-bold ${wonAmount > 0 ? 'text-casino-gold text-gold-glow' : 'text-casino-red'}`}>
+              {wonAmount > 0 ? `You won ${gameState.total_prize}!` : 'Better luck next time!'}
+            </p>
+          </div>
+        )}
+
+        {!gameState || gameState.phase === 'finished' ? (
+          /* Buy card form */
+          <div className="casino-card p-6 space-y-5">
+            <h2 className="section-title">Get Your Card</h2>
+
+            <div>
+              <label className="block text-casino-muted text-xs uppercase tracking-wider mb-2">Card Price</label>
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {['5', '10', '25', '50'].map((amt) => (
+                  <button
+                    key={amt}
+                    onClick={() => setBetAmount(amt + '.00')}
+                    className={`py-2 rounded-lg text-sm font-display font-bold border transition-all ${
+                      betAmount === amt + '.00'
+                        ? 'bg-casino-gold text-casino-bg border-casino-gold'
+                        : 'border-casino-border text-casino-muted hover:border-casino-gold hover:text-casino-gold'
+                    }`}
+                  >
+                    {amt}
+                  </button>
+                ))}
+              </div>
               <input
                 type="number"
                 value={betAmount}
@@ -89,69 +128,78 @@ const ScratchCardPage: React.FC = () => {
                 min="1"
                 max="100"
                 step="0.01"
-                style={{ marginLeft: '8px', padding: '8px', width: '120px' }}
+                placeholder="Custom amount"
+                className="casino-input"
               />
-            </label>
-            <button
-              onClick={handleStart}
-              disabled={loading}
-              style={{ padding: '8px 24px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-            >
-              {loading ? 'Starting...' : 'Buy Card'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <div>
-              <strong>Bet:</strong> {gameState.bet_amount} |
-              <strong> Prize:</strong> {gameState.total_prize} |
-              <strong> Scratched:</strong> {gameState.revealed_indices.length}/{gridSize}
             </div>
-            <button
-              onClick={handleCollect}
-              disabled={gameState.revealed_indices.length === 0}
-              style={{ padding: '8px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-            >
-              Collect ({gameState.total_prize})
-            </button>
-          </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
-            gap: '8px',
-            maxWidth: '300px',
-            margin: '0 auto',
-          }}>
-            {gameState.cells.map((cell, i) => (
-              <button
-                key={i}
-                onClick={() => handleScratch(i)}
-                disabled={cell.revealed}
-                style={{
-                  width: '100%',
-                  aspectRatio: '1',
-                  border: '2px solid #ccc',
-                  borderRadius: '8px',
-                  background: cell.revealed
-                    ? cell.value === 'bust' ? '#f8d7da'
-                    : cell.value === 'blank' ? '#e9ecef'
-                    : '#d4edda'
-                    : 'linear-gradient(135deg, #c0c0c0, #d4d4d4)',
-                  cursor: cell.revealed ? 'default' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold',
-                }}
-              >
-                {cell.revealed ? (cell.value === 'bust' ? 'X' : cell.value === 'blank' ? '-' : cell.value) : '?'}
-              </button>
-            ))}
+            <GlowButton variant="gold" fullWidth size="lg" onClick={handleStart} disabled={loading}>
+              {loading ? 'Getting Card...' : `Buy Card — ${betAmount}`}
+            </GlowButton>
           </div>
-        </div>
-      )}
-    </div>
+        ) : (
+          /* Active scratch card */
+          <div className="space-y-4">
+            {/* Stats */}
+            <div className="casino-card p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-center">
+                  <p className="text-casino-muted text-xs uppercase tracking-wider">Card Cost</p>
+                  <p className="font-display font-bold text-white">{gameState.bet_amount}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-casino-muted text-xs uppercase tracking-wider">Prize So Far</p>
+                  <p className={`font-display font-bold text-lg ${wonAmount > 0 ? 'text-casino-gold' : 'text-white'}`}>
+                    {gameState.total_prize}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-casino-muted text-xs uppercase tracking-wider">Scratched</p>
+                  <p className="font-display font-bold text-white">
+                    {gameState.revealed_indices.length}/{gridSize}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Collect button */}
+            {gameState.phase === 'scratching' && gameState.revealed_indices.length > 0 && (
+              <GlowButton variant="green" fullWidth onClick={handleCollect}>
+                Collect {gameState.total_prize}
+              </GlowButton>
+            )}
+
+            {/* Grid */}
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${gridCols}, 1fr)` }}
+            >
+              {gameState.cells.map((cell, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleScratch(i)}
+                  disabled={cell.revealed}
+                  className={`
+                    aspect-square rounded-2xl border-2 flex items-center justify-center
+                    transition-all duration-200 hover:scale-105 active:scale-95
+                    ${getCellStyle(cell)}
+                  `}
+                >
+                  {getCellContent(cell)}
+                </button>
+              ))}
+            </div>
+
+            {/* Hint */}
+            {gameState.revealed_indices.length === 0 && (
+              <p className="text-center text-casino-muted text-sm">
+                Tap any square to reveal your prize!
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </CasinoLayout>
   );
 };
 
